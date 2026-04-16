@@ -1,0 +1,6 @@
+./.DS_Store
+./clay.com.html
+./__pycache__
+./.venv
+*.zip
+*.npy
