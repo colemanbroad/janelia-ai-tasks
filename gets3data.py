@@ -56,23 +56,65 @@ def f3(w):
     # w.add_image(x, colormap='PiYG')
 
 
-def f5():
+import time
+
+def load_dino():
     dinodir = "./../dinov3/"
     model = torch.hub.load(dinodir, 'dinov3_vits16', source='local', weights='dinoweights/dinov3_vits16_pretrain_lvd1689m-08c60483.pth')
     model.eval()
+    return model
 
-    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s3/', 1116//2, False)
-    # Crop to patch-size-divisible dimensions, replicate to 3 channels, add batch dim
-    H, W = (x.shape[0] // 16) * 16, (x.shape[1] // 16) * 16
-    x_crop = x[:H, :W].astype(np.float32) / 255.0
-    x_3ch = np.stack([x_crop] * 3)  # (3, H, W)
+def run_dino(model, x_np):
+    """Run DINO on a 2D grayscale numpy array. H and W must be divisible by 16."""
+    x = x_np.astype(np.float32) / 255.0
+    x_3ch = np.stack([x] * 3)  # (3, H, W)
     x_tensor = torch.from_numpy(x_3ch).unsqueeze(0)  # (1, 3, H, W)
 
+    t0 = time.time()
     with torch.no_grad():
-        y = model(x_tensor)
-
-
-    ipdb.set_trace()
+        y = model.forward_features(x_tensor)
+    dt = time.time() - t0
+    print(f"Inference: {dt:.3f}s for input {x_np.shape}")
     return y
+
+def f5():
+    model = load_dino()
+
+    # Time on a small 16x16 crop
+    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s3/', 1116//2, False)
+    return x
+    # x = np.zeros((1591, 1593))
+    # x = np.random.randn(1591, 1593)
+    y_small = run_dino(model, x[:16, :16])
+    print("Small crop output keys:", list(y_small.keys()))
+
+    # Full slice — crop to patch-aligned dims
+    H, W = (x.shape[0] // 16) * 16, (x.shape[1] // 16) * 16
+    y_full = run_dino(model, x[:H, :W])
+
+    # Per-patch embeddings: (num_patches, embed_dim)
+    patch_tokens = y_full['x_norm_patchtokens'].squeeze(0)  # (N, 384)
+    print(f"Patch tokens: {patch_tokens.shape}")
+
+    # PCA on patch embeddings — take first 3 components as RGB
+    from sklearn.decomposition import PCA
+    pca = PCA(n_components=3)
+    pca_features = pca.fit_transform(patch_tokens.numpy())  # (N, 3)
+    print(f"PCA explained variance: {pca.explained_variance_ratio_}")
+
+    # Normalize each component to [0, 1] for visualization
+    for i in range(3):
+        lo, hi = pca_features[:, i].min(), pca_features[:, i].max()
+        pca_features[:, i] = (pca_features[:, i] - lo) / (hi - lo + 1e-8)
+
+    # Reshape to patch grid
+    pH, pW = H // 16, W // 16
+    pca_grid = pca_features.reshape(pH, pW, 3)  # (pH, pW, 3)
+
+    # Upscale: repeat each patch to 16x16 pixels
+    pca_img = np.repeat(np.repeat(pca_grid, 16, axis=0), 16, axis=1)  # (H, W, 3)
+    print(f"PCA image: {pca_img.shape}")
+
+    return pca_img
 
 

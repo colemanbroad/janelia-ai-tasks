@@ -17,6 +17,14 @@ within- and across- mito samples. We can assume categories based on patch locati
 FIX: The DINOv3 download links don't work with wget or curl! It's a mystery...
 Let's start off with the smallest model 21M.
 
+OK, the RGB plot of top 3 PCA dims reveal a very weak correlation with image content and a
+very strong correlation with spatial position! So either
+1. there's something wrong with our rope embeddings
+2. there's something wrong with our image input norm
+3. the image resolution is so wrong that the model is producing random noise
+
+Let's do the same RGB-PCA plot for a few samples of random noise...
+
 
 
 # Questions
