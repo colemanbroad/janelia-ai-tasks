@@ -1,13 +1,14 @@
 import os
 import fsspec, zarr
+import time
 import dask.array as da # we import dask to help us manage parallel access to the big dataset
 import ipdb
 import numpy as np
+import torch
 from types import SimpleNamespace
 from dask.diagnostics import ProgressBar
 from dataclasses import dataclass
-
-import torch
+from sklearn.decomposition import PCA
 
 CACHE_DIR = 'cache'
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -33,12 +34,15 @@ def loadN5(ds, subpath, idx, size_only=False):
     if isinstance(zdata, zarr.hierarchy.Group):
         print(f"Path '{subpath}' is a Group, not an Array. Available keys: {list(zdata.keys())}")
         return None
+
+    print(zdata)
+    # ipdb.set_trace()
     ddata = da.from_array(zdata, chunks=zdata.chunks)
     print(ddata)
     if size_only: return
     with ProgressBar():
         sli = idx if idx != 'all' else None
-        result = ddata[sli].compute()
+        result = ddata[sli, 500:1000, 500:1000].compute()
         np.save(cache_file, result)
         print(f"Saved to cache: {cache_file}")
     return result
@@ -55,9 +59,6 @@ def f3(w):
     # x = loadN5('jrc_jurkat-1', 'em/fibsem-uint16/s4', 100)
     # w.add_image(x, colormap='PiYG')
 
-
-import time
-
 def load_dino():
     dinodir = "./../dinov3/"
     model = torch.hub.load(dinodir, 'dinov3_vits16', source='local', weights='dinoweights/dinov3_vits16_pretrain_lvd1689m-08c60483.pth')
@@ -66,7 +67,15 @@ def load_dino():
 
 def run_dino(model, x_np):
     """Run DINO on a 2D grayscale numpy array. H and W must be divisible by 16."""
-    x = x_np.astype(np.float32) / 255.0
+    x = x_np.astype(np.float32) # / 255.0
+    mu = x_np.mean()
+    std = x_np.std()
+    x = (x - mu) / std 
+    x = x * 0.229 + 0.485
+    x = x_np.astype(np.float32) # / 255.0
+
+    # ipdb.set_trace()
+
     x_3ch = np.stack([x] * 3)  # (3, H, W)
     x_tensor = torch.from_numpy(x_3ch).unsqueeze(0)  # (1, 3, H, W)
 
@@ -77,12 +86,22 @@ def run_dino(model, x_np):
     print(f"Inference: {dt:.3f}s for input {x_np.shape}")
     return y
 
+def run(w):
+    res = f5()
+    w.add_image(res[0])
+    w.add_image(res[1])
+    
 def f5():
     model = load_dino()
 
     # Time on a small 16x16 crop
-    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s3/', 1116//2, False)
-    return x
+    # x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s3/', 2233//4, False)
+    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s2/', 2233//2, False)
+    # x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s1/', 2233, False)
+    # x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s0/', 2233, False)
+    # print(x.shape)
+    # x = x[500:1000, 500:1000]
+    # return x
     # x = np.zeros((1591, 1593))
     # x = np.random.randn(1591, 1593)
     y_small = run_dino(model, x[:16, :16])
@@ -97,7 +116,6 @@ def f5():
     print(f"Patch tokens: {patch_tokens.shape}")
 
     # PCA on patch embeddings — take first 3 components as RGB
-    from sklearn.decomposition import PCA
     pca = PCA(n_components=3)
     pca_features = pca.fit_transform(patch_tokens.numpy())  # (N, 3)
     print(f"PCA explained variance: {pca.explained_variance_ratio_}")
@@ -115,6 +133,19 @@ def f5():
     pca_img = np.repeat(np.repeat(pca_grid, 16, axis=0), 16, axis=1)  # (H, W, 3)
     print(f"PCA image: {pca_img.shape}")
 
-    return pca_img
+    return (x, pca_img)
 
+# from transformers import pipeline
+# from transformers.image_utils import load_image
 
+def f6():
+    url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/pipeline-cat-chonk.jpeg"
+    image = load_image(url)
+
+    feature_extractor = pipeline(
+        model="facebook/dinov3-convnext-tiny-pretrain-lvd1689m",
+        task="image-feature-extraction",
+    )
+    features = feature_extractor(image)
+    return features
+    # ipdb.set_trace()
