@@ -41,9 +41,11 @@ def loadN5(ds, subpath, idx, size_only=False):
     ddata = da.from_array(zdata, chunks=zdata.chunks)
     print(ddata)
     if size_only: return
+    a,b = 16*30, 16*60
     with ProgressBar():
         sli = idx if idx != 'all' else None
-        result = ddata[sli, 500:1000, 500:1000].compute()
+        result = ddata[sli, a:b, a:b].compute()
+        # result = ddata[sli, 500:1000, 500:1000].compute()
         np.save(cache_file, result)
         print(f"Saved to cache: {cache_file}")
     return result
@@ -154,6 +156,77 @@ def f5():
     print(f"PCA image: {pca_img.shape}")
 
     return (x, pca_img)
+
+def overlap_average(feature_grid, H, W, patch_size, stride):
+    """Average overlapping patches back into an image.
+    feature_grid: (pH, pW, C), returns (H, W, C)."""
+    C = feature_grid.shape[2]
+    out = np.zeros((H, W, C), dtype=np.float64)
+    counts = np.zeros((H, W, 1), dtype=np.float64)
+    pH, pW = feature_grid.shape[:2]
+    for i in range(pH):
+        for j in range(pW):
+            y0, x0 = i * stride, j * stride
+            out[y0:y0+patch_size, x0:x0+patch_size] += feature_grid[i, j]
+            counts[y0:y0+patch_size, x0:x0+patch_size] += 1
+    out /= counts
+    return out.astype(np.float32)
+
+def f8(w, stride=2, patch_size=16):
+    """Compare DINO PCA vs LBP histogram PCA on overlapping patches."""
+    from skimage.feature import local_binary_pattern
+
+    # Load image
+    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s1/', 2233, False)
+    # x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s2/', 2233//2, False)
+    # a, b = 16*30, 16*60
+    # x = x[a:b, a:b]
+    H, W = (x.shape[0] // 16) * 16, (x.shape[1] // 16) * 16
+    x_crop = x[:H, :W].astype(np.float32)
+
+    # --- LBP ---
+    # Compute LBP image (uniform patterns, radius=1, 8 neighbors -> 10 bins)
+    radius, n_points = 1, 8
+    lbp_img = local_binary_pattern(x_crop, n_points, radius, method='uniform')
+    n_bins = n_points + 2  # 10 uniform bins
+
+    # Extract LBP histograms from overlapping patches
+    pH = (H - patch_size) // stride + 1
+    pW = (W - patch_size) // stride + 1
+    lbp_features = np.zeros((pH, pW, n_bins), dtype=np.float32)
+    for i in range(pH):
+        for j in range(pW):
+            y0, x0 = i * stride, j * stride
+            patch = lbp_img[y0:y0+patch_size, x0:x0+patch_size]
+            hist, _ = np.histogram(patch, bins=n_bins, range=(0, n_bins), density=True)
+            lbp_features[i, j] = hist
+
+    # PCA on LBP histograms
+    pca_lbp = PCA(n_components=3)
+    lbp_pca = pca_lbp.fit_transform(lbp_features.reshape(-1, n_bins))
+    for i in range(3):
+        lo, hi = lbp_pca[:, i].min(), lbp_pca[:, i].max()
+        lbp_pca[:, i] = (lbp_pca[:, i] - lo) / (hi - lo + 1e-8)
+    lbp_pca_grid = lbp_pca.reshape(pH, pW, 3)
+    lbp_pca_img = overlap_average(lbp_pca_grid, H, W, patch_size, stride)
+
+    # --- DINO ---
+    model = load_dino()
+    model.patch_embed.proj.stride = (stride, stride)
+    y_full = run_dino(model, x_crop)
+    patch_tokens = y_full['x_norm_patchtokens'].squeeze(0).numpy()
+
+    pca_dino = PCA(n_components=3)
+    dino_pca = pca_dino.fit_transform(patch_tokens)
+    for i in range(3):
+        lo, hi = dino_pca[:, i].min(), dino_pca[:, i].max()
+        dino_pca[:, i] = (dino_pca[:, i] - lo) / (hi - lo + 1e-8)
+    dino_pca_grid = dino_pca.reshape(pH, pW, 3)
+    dino_pca_img = overlap_average(dino_pca_grid, H, W, patch_size, stride)
+
+    w.add_image(x_crop, name='original')
+    w.add_image(lbp_pca_img, name='LBP_PCA', rgb=True)
+    w.add_image(dino_pca_img, name='DINO_PCA', rgb=True)
 
 def f7(w, k=8):
     """K-means on DINO patch embeddings, then tile patches grouped by cluster."""

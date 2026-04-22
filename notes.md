@@ -47,6 +47,9 @@ patches tiled by cluster?
 Let's see if we can directly change the patch_embed.proj.stride to made predictions more dense...
 Yes, this doesn't break the structure of the model. The stride is flexible.
 
+--- ---
+
+
 
 
 # Questions
@@ -54,7 +57,7 @@ Yes, this doesn't break the structure of the model. The stride is flexible.
 Q: How are we going to validate clusters without supervised GT?
 A: Some datasets DO have GT.
 
-Task 2.2.1 -- Patch Size Selection
+## Task 2.2.1 -- Patch Size Selection
 
 The pretrained models require patches of size 16x16.
 Since mitos are typically 20px across at their most narrow in the s2 data this embedding doesn't
@@ -65,7 +68,7 @@ Or we can treat the image scale as a hyperparam to be fit/trained against ground
 
     'jrc_mus-liver', 'em/fibsem-uint8/s2/', 2233//2, False 
 
-Task 2.2.2 -- Even more dense embeddings
+## Task 2.2.2 -- Even more dense embeddings
 
 The DINO paper refers to per-patch embeddings that tile a full image as "dense" 
 To increase the resolution of our predictions we can
@@ -78,3 +81,22 @@ To increase the resolution of our predictions we can
 ---
 
 It's probably fair game to ask how these DINO embeddings compare with classical hand-coded feature extractors, e.g. SIFT.
+At stride=8 it's hard to notice any visual patterns for the mitos, but at stride=4 they emerge and at stride=2 you can count them.
+The LBP features reveal some global patterns but don't really pick up on mitos.
+
+---
+
+Let's try this approach with the s0 and s1 resolution data.
+
+--- --- ---
+
+## Task 2.3.1 -- Embedding-Based Retrieval & Visualization
+
+Pick out a test mito and use it as a query to evaluate quality of embeddings wrt mitos specifically.
+There isn't an unambiguous 1-1 mapping between embeddings and mitos, but we can
+1. average an embedding over the mito mask
+2. pick the embedding closest to the mito centerpoint
+3. choose a representative mito
+4. choose a mito that fits in the 16x16 patch size
+
+Then we can 
