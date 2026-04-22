@@ -94,7 +94,8 @@ def run(w):
     
 def f5():
     model = load_dino()
-    model.patch_embed.proj.stride = (4,4)
+    stride = 2
+    model.patch_embed.proj.stride = (stride,stride)
 
     # Time on a small 16x16 crop
     # x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s3/', 2233//4, False)
@@ -134,7 +135,7 @@ def f5():
         pca_features[:, i] = (pca_features[:, i] - lo) / (hi - lo + 1e-8)
 
     # With stride=4, patch grid is ((H-16)//4+1, (W-16)//4+1)
-    stride = 4
+    # stride = 4
     patch_size = 16
     pH = (H - patch_size) // stride + 1
     pW = (W - patch_size) // stride + 1

@@ -75,3 +75,6 @@ To increase the resolution of our predictions we can
 3. we can extend `T` to be any kind of information-preserving transformation over which our embeddings should be invariant.
 4. we can train a super-resolution model to intelligently enhance the results.
 
+---
+
+It's probably fair game to ask how these DINO embeddings compare with classical hand-coded feature extractors, e.g. SIFT.
