@@ -55,7 +55,7 @@ def loadN5(ds, subpath, idx, size_only=False):
 def f3(w):
     # x = loadN5('jrc_fly-larva-1', 'em/tem-uint8/s3', 4816//2)
     # w.add_image(x, colormap='PiYG')
-    x = loadN5('jrc_fly-larva-1', 'labels/s3', 4816//2)
+    x = loadN5('jrc_fly-larva-1', 'labels/s2', 4816//4)
     w.add_image(x, colormap='PiYG')
     # x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s3/', 1116//2, False)
     # w.add_image(x, colormap='PiYG')
@@ -280,6 +280,58 @@ def f9(w, stride=4, patch_size=16):
         name = f'LBP_r{radius}_p{n_points} ({dt:.1f}s)'
         print(f"{name}  variance: {pca.explained_variance_ratio_}")
         w.add_image(pca_img, name=name, rgb=True)
+
+def f10(w, query_yx=(107, 317), bg_yx=(232, 230), stride=2):
+    """Task 2.3.1: Embedding-based retrieval using a query mito point.
+    Compute similarity to query mito minus similarity to background point."""
+    patch_size = 16
+    model = load_dino()
+    model.patch_embed.proj.stride = (stride, stride)
+
+    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s2/', 2233//2, False)
+    H, W = (x.shape[0] // 16) * 16, (x.shape[1] // 16) * 16
+    x_crop = x[:H, :W]
+
+    y_full = run_dino(model, x_crop.astype(np.float32))
+    patch_tokens = y_full['x_norm_patchtokens'].squeeze(0)  # (N, 384)
+    patch_normed = torch.nn.functional.normalize(patch_tokens, dim=-1)
+
+    pH = (H - patch_size) // stride + 1
+    pW = (W - patch_size) // stride + 1
+
+    def pixel_to_patch(yx):
+        y, x = yx
+        return min(y // stride, pH - 1), min(x // stride, pW - 1)
+
+    # Query mito embedding
+    qi, qj = pixel_to_patch(query_yx)
+    query_emb = torch.nn.functional.normalize(patch_tokens[qi * pW + qj].unsqueeze(0), dim=-1)
+    sim_mito = (patch_normed @ query_emb.T).squeeze(-1).numpy()
+
+    # Background embedding
+    bi, bj = pixel_to_patch(bg_yx)
+    bg_emb = torch.nn.functional.normalize(patch_tokens[bi * pW + bj].unsqueeze(0), dim=-1)
+    sim_bg = (patch_normed @ bg_emb.T).squeeze(-1).numpy()
+
+    # Mito score = similarity to mito - similarity to background
+    score = sim_mito - sim_bg
+
+    # Visualize
+    score_grid = score.reshape(pH, pW, 1)
+    score_img = overlap_average(score_grid, H, W, patch_size, stride).squeeze(-1)
+
+    # Find local maxima on the combined score
+    from skimage.feature import peak_local_max
+    peaks = peak_local_max(score_img, min_distance=10, threshold_rel=0.3)
+    print(f"Found {len(peaks)} local maxima")
+
+    w.add_image(x_crop, name='original')
+    w.add_image(score_img, name='mito_score', colormap='inferno')
+    w.add_points(np.array([list(query_yx)]), name='query_mito', size=10, face_color='red')
+    w.add_points(np.array([list(bg_yx)]), name='query_bg', size=10, face_color='blue')
+    w.add_points(peaks, name='similar_peaks', size=8, face_color='green')
+
+    return score_img
 
 def f7(w, k=8):
     """K-means on DINO patch embeddings, then tile patches grouped by cluster."""
