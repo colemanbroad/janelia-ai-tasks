@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from dask.diagnostics import ProgressBar
 from dataclasses import dataclass
 from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
 
 CACHE_DIR = 'cache'
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -93,19 +94,26 @@ def run(w):
     
 def f5():
     model = load_dino()
+    model.patch_embed.proj.stride = (4,4)
 
     # Time on a small 16x16 crop
     # x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s3/', 2233//4, False)
     x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s2/', 2233//2, False)
+    a, b = 16*30, 16*60
+    x = x[a:b, a:b]
     # x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s1/', 2233, False)
     # x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s0/', 2233, False)
     # print(x.shape)
-    # x = x[500:1000, 500:1000]
     # return x
     # x = np.zeros((1591, 1593))
     # x = np.random.randn(1591, 1593)
-    y_small = run_dino(model, x[:16, :16])
+
+    y_small = run_dino(model, x[:16*2, :16*2])
     print("Small crop output keys:", list(y_small.keys()))
+    ## TODO: make a dumb, approximate upper bound predition on inference time by extrapolating from
+    # the times required to run inf on 1) a 16x16 patch and then 2) a 32x16 patch and linearly extrapolating.
+
+    # ipdb.set_trace()
 
     # Full slice — crop to patch-aligned dims
     H, W = (x.shape[0] // 16) * 16, (x.shape[1] // 16) * 16
@@ -116,7 +124,7 @@ def f5():
     print(f"Patch tokens: {patch_tokens.shape}")
 
     # PCA on patch embeddings — take first 3 components as RGB
-    pca = PCA(n_components=3)
+    pca = PCA(n_components=3, whiten=False)
     pca_features = pca.fit_transform(patch_tokens.numpy())  # (N, 3)
     print(f"PCA explained variance: {pca.explained_variance_ratio_}")
 
@@ -125,27 +133,68 @@ def f5():
         lo, hi = pca_features[:, i].min(), pca_features[:, i].max()
         pca_features[:, i] = (pca_features[:, i] - lo) / (hi - lo + 1e-8)
 
-    # Reshape to patch grid
-    pH, pW = H // 16, W // 16
+    # With stride=4, patch grid is ((H-16)//4+1, (W-16)//4+1)
+    stride = 4
+    patch_size = 16
+    pH = (H - patch_size) // stride + 1
+    pW = (W - patch_size) // stride + 1
     pca_grid = pca_features.reshape(pH, pW, 3)  # (pH, pW, 3)
 
-    # Upscale: repeat each patch to 16x16 pixels
-    pca_img = np.repeat(np.repeat(pca_grid, 16, axis=0), 16, axis=1)  # (H, W, 3)
+    # Average overlapping patches: scatter each patch's value over its 16x16 region
+    pca_img = np.zeros((H, W, 3), dtype=np.float64)
+    counts = np.zeros((H, W, 1), dtype=np.float64)
+    for i in range(pH):
+        for j in range(pW):
+            y0, x0 = i * stride, j * stride
+            pca_img[y0:y0+patch_size, x0:x0+patch_size] += pca_grid[i, j]
+            counts[y0:y0+patch_size, x0:x0+patch_size] += 1
+    pca_img /= counts
+    pca_img = pca_img.astype(np.float32)
     print(f"PCA image: {pca_img.shape}")
 
     return (x, pca_img)
 
-# from transformers import pipeline
-# from transformers.image_utils import load_image
+def f7(w, k=8):
+    """K-means on DINO patch embeddings, then tile patches grouped by cluster."""
+    model = load_dino()
 
-def f6():
-    url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/pipeline-cat-chonk.jpeg"
-    image = load_image(url)
+    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s2/', 2233//2, False)
+    H, W = (x.shape[0] // 16) * 16, (x.shape[1] // 16) * 16
+    x_crop = x[:H, :W]
 
-    feature_extractor = pipeline(
-        model="facebook/dinov3-convnext-tiny-pretrain-lvd1689m",
-        task="image-feature-extraction",
-    )
-    features = feature_extractor(image)
-    return features
-    # ipdb.set_trace()
+    y = run_dino(model, x_crop)
+    patch_tokens = y['x_norm_patchtokens'].squeeze(0).numpy()  # (N, 384)
+    pH, pW = H // 16, W // 16
+
+    # K-means clustering
+    kmeans = KMeans(n_clusters=k, random_state=0, n_init=10)
+    labels = kmeans.fit_predict(patch_tokens)  # (N,)
+    label_grid = labels.reshape(pH, pW)
+
+    # Extract 16x16 patches from the original image
+    patches = x_crop.reshape(pH, 16, pW, 16).transpose(0, 2, 1, 3)  # (pH, pW, 16, 16)
+
+    # For each cluster, collect its patches and tile them into a grid
+    cluster_images = []
+    for c in range(k):
+        mask = labels == c
+        cluster_patches = patches.reshape(-1, 16, 16)[mask]  # (n_c, 16, 16)
+        n_c = len(cluster_patches)
+        if n_c == 0:
+            continue
+        cols = int(np.ceil(np.sqrt(n_c)))
+        rows = int(np.ceil(n_c / cols))
+        # Pad to fill the grid
+        pad_count = rows * cols - n_c
+        if pad_count > 0:
+            padding = np.zeros((pad_count, 16, 16), dtype=cluster_patches.dtype)
+            cluster_patches = np.concatenate([cluster_patches, padding])
+        tile = cluster_patches.reshape(rows, cols, 16, 16).transpose(0, 2, 1, 3).reshape(rows * 16, cols * 16)
+        cluster_images.append(tile)
+
+    # Show label map and cluster tiles
+    label_img = np.repeat(np.repeat(label_grid, 16, axis=0), 16, axis=1)
+    w.add_image(x_crop, name='original')
+    w.add_image(label_img, name='cluster_labels', colormap='turbo')
+    for i, img in enumerate(cluster_images):
+        w.add_image(img, name=f'cluster_{i}')

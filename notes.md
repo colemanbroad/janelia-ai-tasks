@@ -44,10 +44,34 @@ results look quite noisy. I need a different view to see if the mitos are being 
 Maybe we can cluster the dense predictions into a small number of types and plot the image
 patches tiled by cluster?
 
+Let's see if we can directly change the patch_embed.proj.stride to made predictions more dense...
+Yes, this doesn't break the structure of the model. The stride is flexible.
+
 
 
 # Questions
 
 Q: How are we going to validate clusters without supervised GT?
 A: Some datasets DO have GT.
+
+Task 2.2.1 -- Patch Size Selection
+
+The pretrained models require patches of size 16x16.
+Since mitos are typically 20px across at their most narrow in the s2 data this embedding doesn't
+capture their full structure. So it's unlikely to capture mito geometry, but will get texture.
+We can avg-pool/downscale the images until the average mito fits inside the 16x16 window.
+Or we can treat the image scale as a hyperparam to be fit/trained against ground truth segmentations.
+
+
+    'jrc_mus-liver', 'em/fibsem-uint8/s2/', 2233//2, False 
+
+Task 2.2.2 -- Even more dense embeddings
+
+The DINO paper refers to per-patch embeddings that tile a full image as "dense" 
+To increase the resolution of our predictions we can
+0. take the stride-16 embeddings and upsample them with e.g. linear interpolation.
+1. reduce the model's patch-embedding stride to create overlapping embeddings and then average the results.
+2. equivalently, we can apply `avg(Tinv(model(T(x))))` for whole-image translations `T`.
+3. we can extend `T` to be any kind of information-preserving transformation over which our embeddings should be invariant.
+4. we can train a super-resolution model to intelligently enhance the results.
 
