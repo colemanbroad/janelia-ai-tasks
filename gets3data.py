@@ -17,7 +17,8 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 def loadN5(ds, subpath, idx, size_only=False):
     subpath = subpath.strip('/')
     cache_file = os.path.join(CACHE_DIR, f"{ds}_{subpath.replace('/', '_')}_{idx}.npy")
-    if os.path.exists(cache_file):
+    refresh_cache = True
+    if os.path.exists(cache_file) and not refresh_cache:
         print(f"Loading from cache: {cache_file}")
         return np.load(cache_file)
 
@@ -41,7 +42,8 @@ def loadN5(ds, subpath, idx, size_only=False):
     ddata = da.from_array(zdata, chunks=zdata.chunks)
     print(ddata)
     if size_only: return
-    a,b = 16*30, 16*60
+    m = 1 # s0=4, s1=2, s2=1
+    a,b = 16*30*m, 16*60*m
     with ProgressBar():
         sli = idx if idx != 'all' else None
         result = ddata[sli, a:b, a:b].compute()
@@ -70,14 +72,12 @@ def load_dino():
 
 def run_dino(model, x_np):
     """Run DINO on a 2D grayscale numpy array. H and W must be divisible by 16."""
-    x = x_np.astype(np.float32) # / 255.0
+    x = x_np.astype(np.float32)
     mu = x_np.mean()
     std = x_np.std()
     x = (x - mu) / std 
     x = x * 0.229 + 0.485
-    x = x_np.astype(np.float32) # / 255.0
-
-    # ipdb.set_trace()
+    x = x_np.astype(np.float32)
 
     x_3ch = np.stack([x] * 3)  # (3, H, W)
     x_tensor = torch.from_numpy(x_3ch).unsqueeze(0)  # (1, 3, H, W)
@@ -177,7 +177,7 @@ def f8(w, stride=2, patch_size=16):
     from skimage.feature import local_binary_pattern
 
     # Load image
-    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s1/', 2233, False)
+    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s0/', 2233*2, False)
     # x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s2/', 2233//2, False)
     # a, b = 16*30, 16*60
     # x = x[a:b, a:b]
@@ -227,6 +227,59 @@ def f8(w, stride=2, patch_size=16):
     w.add_image(x_crop, name='original')
     w.add_image(lbp_pca_img, name='LBP_PCA', rgb=True)
     w.add_image(dino_pca_img, name='DINO_PCA', rgb=True)
+
+def f9(w, stride=4, patch_size=16):
+    """Test LBP with different (radius, n_points) combos side by side."""
+    from skimage.feature import local_binary_pattern
+
+    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s0/', 2233*2, False)
+    H, W = (x.shape[0] // 16) * 16, (x.shape[1] // 16) * 16
+    x_crop = x[:H, :W].astype(np.float32)
+
+    pH = (H - patch_size) // stride + 1
+    pW = (W - patch_size) // stride + 1
+
+    configs = [
+        (1, 8),
+        (2, 16),
+        (3, 24),
+        (4, 32),
+        (1, 16),
+        (2, 8),
+        (3, 8),
+        (5, 40),
+    ]
+
+    w.add_image(x_crop, name='original')
+
+    for radius, n_points in configs:
+        t0 = time.time()
+        lbp_img = local_binary_pattern(x_crop, n_points, radius, method='uniform')
+        n_bins = n_points + 2
+
+        lbp_features = np.zeros((pH * pW, n_bins), dtype=np.float32)
+        idx = 0
+        for i in range(pH):
+            for j in range(pW):
+                y0, x0 = i * stride, j * stride
+                patch = lbp_img[y0:y0+patch_size, x0:x0+patch_size]
+                hist, _ = np.histogram(patch, bins=n_bins, range=(0, n_bins), density=True)
+                lbp_features[idx] = hist
+                idx += 1
+
+        pca = PCA(n_components=3)
+        pca_out = pca.fit_transform(lbp_features)
+        for c in range(3):
+            lo, hi = pca_out[:, c].min(), pca_out[:, c].max()
+            pca_out[:, c] = (pca_out[:, c] - lo) / (hi - lo + 1e-8)
+
+        pca_grid = pca_out.reshape(pH, pW, 3)
+        pca_img = overlap_average(pca_grid, H, W, patch_size, stride)
+
+        dt = time.time() - t0
+        name = f'LBP_r{radius}_p{n_points} ({dt:.1f}s)'
+        print(f"{name}  variance: {pca.explained_variance_ratio_}")
+        w.add_image(pca_img, name=name, rgb=True)
 
 def f7(w, k=8):
     """K-means on DINO patch embeddings, then tile patches grouped by cluster."""

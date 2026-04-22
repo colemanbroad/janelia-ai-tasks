@@ -87,6 +87,19 @@ The LBP features reveal some global patterns but don't really pick up on mitos.
 ---
 
 Let's try this approach with the s0 and s1 resolution data.
+The s1 res data with stride=4 DINO still allows you to see/count mitos, but the color signal is
+significantly weaker. The red mitos don't stand out as well against the blue background.
+
+For completeness we'll try the s0 image...
+
+The stride=16 version is waaaay too noisy. Very little RGB correlation with mito.
+The stride=8 version is still way too noisy. R correlates with dark pixels, G with edges. B is everywhere.
+
+Exploring hyperopt for LBP (f9) shows r4p32 to have the most interesting correlation with mitos.
+
+
+
+
 
 --- --- ---
 
@@ -96,7 +109,12 @@ Pick out a test mito and use it as a query to evaluate quality of embeddings wrt
 There isn't an unambiguous 1-1 mapping between embeddings and mitos, but we can
 1. average an embedding over the mito mask
 2. pick the embedding closest to the mito centerpoint
-3. choose a representative mito
-4. choose a mito that fits in the 16x16 patch size
+3. and also choose a representative mito
+4. or choose a mito that fits in the 16x16 patch size
 
-Then we can 
+Then instead of doing PCA on the embeddings we can take the cosine similarity between
+our query mito and the rest of the image. The result will be a greyscale image showing similarity
+to the query mito. If we're using multiple query objects then we can use the average/max cosine
+similarity.
+
+Let's start off with the query point (107, 317) 
