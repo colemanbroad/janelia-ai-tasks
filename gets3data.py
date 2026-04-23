@@ -459,11 +459,11 @@ def task2(w, stride=8):
     model.patch_embed.proj.stride = (stride, stride)
 
     datasets = {
-        'liver': {
-            'ds': 'jrc_mus-liver',
-            'subpath': 'recon-1/em/fibsem-uint8',
-            'center': (3515, 2619, 3754),  # a,b,c
-        },
+        # 'liver': {
+        #     'ds': 'jrc_mus-liver',
+        #     'subpath': 'recon-1/em/fibsem-uint8',
+        #     'center': (3515, 2619, 3754),  # a,b,c
+        # },
         'kidney': {
             'ds': 'jrc_mus-kidney',
             'subpath': 'recon-1/em/fibsem-uint8',
@@ -474,6 +474,7 @@ def task2(w, stride=8):
     for dname, info in datasets.items():
         a, b, c = info['center']
         for si in range(4):  # s0, s1, s2, s3
+            # if si in [1,3]: continue
             scale = f's{si}'
             slc = p2patch(a, b, c, s=si, const=0, hw=200)
             img = loadZarr(info['ds'], f"{info['subpath']}/{scale}", slc)
@@ -500,7 +501,14 @@ def task2(w, stride=8):
                 pca_features[:, i] = (pca_features[:, i] - lo) / (hi - lo + 1e-8)
 
             pca_grid = pca_features.reshape(pH, pW, 3)
-            pca_img = overlap_average(pca_grid, H, W, patch_size, stride)
+            if stride > 1:
+                # Bilinear interpolate to full resolution
+                pca_tensor = torch.from_numpy(pca_grid).permute(2, 0, 1).unsqueeze(0)  # (1, 3, pH, pW)
+                # pca_img = torch.nn.functional.interpolate(pca_tensor, size=(H, W), mode='bilinear', align_corners=False)
+                pca_img = torch.nn.functional.interpolate(pca_tensor, size=(H, W), mode='nearest')
+                pca_img = pca_img.squeeze(0).permute(1, 2, 0).numpy()  # (H, W, 3)
+            else:
+                pca_img = overlap_average(pca_grid, H, W, patch_size, stride)
 
             label = f'{dname} {scale}'
             print(f"{label}: {img.shape} -> PCA {pca_img.shape}, var={pca.explained_variance_ratio_}")
