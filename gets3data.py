@@ -452,6 +452,11 @@ def f9(w, stride=4, patch_size=16):
         w.add_image(pca_img, name=name, rgb=True)
 
 
+def task1():
+    # for both liver and kidney datasets determine the volume, then randomly sample
+    # 20 centerpoints from the volume and take 1024px wide crops with const z centered at each point.
+    # Download them and save them to disk.
+
 def task2(w, stride=8):
     """Plot RGB PCA of DINO embeddings at s0-s3 resolutions for liver and kidney."""
     patch_size = 16
