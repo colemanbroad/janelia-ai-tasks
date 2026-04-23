@@ -360,6 +360,28 @@ def f8(w, img, stride=2, name=''):
     # w.add_image(lbp_pca_img, name=f'{pfx}LBP_PCA', rgb=True)
     w.add_image(dino_pca_img, name=f'{pfx}DINO_PCA', rgb=True)
 
+def f11(w, sigma_range=(1, 3, 5, 9, 15)):
+    """Blur + threshold segmentation sweep on mus-kidney image."""
+    from scipy.ndimage import gaussian_filter
+    from skimage.filters import threshold_otsu
+
+    c, b, a = 6417, 4150, 10157
+    img = loadZarr('jrc_mus-kidney', 'recon-1/em/fibsem-uint8/s2', p2patch(a, b, c, s=2, const=0, hw=200))
+    img = img.astype(np.float32)
+
+    w.add_image(img, name='original')
+
+    from scipy.ndimage import label as ndlabel
+
+    for sigma in sigma_range:
+        blurred = gaussian_filter(img, sigma=sigma)
+        thresh = threshold_otsu(blurred)
+        mask = blurred < thresh  # mitos are dark in EM
+        labels, n_objects = ndlabel(mask)
+        w.add_image(blurred, name=f'blur_s{sigma}')
+        w.add_labels(labels, name=f'seg_s{sigma}')
+        print(f"sigma={sigma}: threshold={thresh:.1f}, mito_frac={mask.mean():.3f}, n_objects={n_objects}")
+
 def f9(w, stride=4, patch_size=16):
     """Test LBP with different (radius, n_points) combos side by side."""
     a, b = 16*30, 16*60
