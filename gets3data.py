@@ -14,55 +14,110 @@ from sklearn.cluster import KMeans
 CACHE_DIR = 'cache'
 os.makedirs(CACHE_DIR, exist_ok=True)
 
-def loadN5(ds, subpath, idx, size_only=False):
+def _slice_to_str(s):
+    """Convert a slice/index tuple to a string for cache filenames."""
+    if not isinstance(s, tuple):
+        s = (s,)
+    parts = []
+    for x in s:
+        if isinstance(x, slice):
+            start = x.start if x.start is not None else ''
+            stop = x.stop if x.stop is not None else ''
+            step = x.step if x.step is not None else ''
+            parts.append(f'{start}.{stop}.{step}')
+        else:
+            parts.append(str(x))
+    return '_'.join(parts)
+
+def load_remote(ds, subpath, slc, fmt='n5', size_only=False, refresh_cache=False):
     subpath = subpath.strip('/')
-    cache_file = os.path.join(CACHE_DIR, f"{ds}_{subpath.replace('/', '_')}_{idx}.npy")
-    refresh_cache = True
+    slc_str = _slice_to_str(slc)
+    cache_file = os.path.join(CACHE_DIR, f"{ds}_{fmt}_{subpath.replace('/', '_')}_{slc_str}.npy")
     if os.path.exists(cache_file) and not refresh_cache:
         print(f"Loading from cache: {cache_file}")
         return np.load(cache_file)
 
-    path = f's3://janelia-cosem-datasets/{ds}/{ds}.n5'
-    group = zarr.open(zarr.N5FSStore(path, anon=True))
+    if fmt == 'n5':
+        path = f's3://janelia-cosem-datasets/{ds}/{ds}.n5'
+        group = zarr.open(zarr.N5FSStore(path, anon=True))
+    elif fmt == 'zarr':
+        import s3fs
+        fs = s3fs.S3FileSystem(anon=True)
+        path = f's3://janelia-cosem-datasets/{ds}/{ds}.zarr'
+        group = zarr.open(zarr.storage.FSStore(path, fs=fs, mode='r'))
+    else:
+        assert False, f"Unknown format '{fmt}', use 'n5' or 'zarr'"
     zdata = group
     for sub in subpath.split('/'):
-        if not isinstance(zdata, zarr.hierarchy.Group):
-            print(f"Reached a non-Group at '{sub}'. Remaining path can't be traversed.")
-            return None
-        if sub not in zdata:
-            print(f"Key '{sub}' not found. Available keys: {list(zdata.keys())}")
-            return None
+        assert isinstance(zdata, zarr.hierarchy.Group), f"Reached a non-Group at '{sub}'. Remaining path can't be traversed."
+        assert sub in zdata, f"Key '{sub}' not found. Available keys: {list(zdata.keys())}"
         zdata = zdata[sub]
-    if isinstance(zdata, zarr.hierarchy.Group):
-        print(f"Path '{subpath}' is a Group, not an Array. Available keys: {list(zdata.keys())}")
-        return None
+    assert not isinstance(zdata, zarr.hierarchy.Group), f"Path '{subpath}' is a Group, not an Array. Available keys: {list(zdata.keys())}"
 
     print(zdata)
-    # ipdb.set_trace()
+
+    # Check bounds and clamp slices to array shape
+    shape = zdata.shape
+    slc_tuple = slc if isinstance(slc, tuple) else (slc,)
+    clamped = []
+    for dim, s in enumerate(slc_tuple):
+        if isinstance(s, slice):
+            lo = max(s.start if s.start is not None else 0, 0)
+            hi = min(s.stop if s.stop is not None else shape[dim], shape[dim])
+            assert lo < hi, f"Dim {dim}: slice [{s.start}:{s.stop}] is entirely out of bounds for size {shape[dim]}"
+            if lo != s.start or hi != s.stop:
+                print(f"Dim {dim}: clamped [{s.start}:{s.stop}] -> [{lo}:{hi}] (size {shape[dim]})")
+            clamped.append(slice(lo, hi, s.step))
+        else:
+            assert 0 <= s < shape[dim], f"Dim {dim}: index {s} out of bounds for size {shape[dim]}"
+            clamped.append(s)
+    slc = tuple(clamped)
+
     ddata = da.from_array(zdata, chunks=zdata.chunks)
     print(ddata)
     if size_only: return
-    m = 1 # s0=4, s1=2, s2=1
-    a,b = 16*30*m, 16*60*m
     with ProgressBar():
-        sli = idx if idx != 'all' else None
-        result = ddata[sli, a:b, a:b].compute()
-        # result = ddata[sli, 500:1000, 500:1000].compute()
+        result = ddata[slc].compute()
         np.save(cache_file, result)
         print(f"Saved to cache: {cache_file}")
     return result
 
+def loadN5(ds, subpath, slc, **kwargs):
+    return load_remote(ds, subpath, slc, fmt='n5', **kwargs)
+
+def loadZarr(ds, subpath, slc, **kwargs):
+    return load_remote(ds, subpath, slc, fmt='zarr', **kwargs)
+
 def f3(w):
-    # x = loadN5('jrc_fly-larva-1', 'em/tem-uint8/s3', 4816//2)
-    # w.add_image(x, colormap='PiYG')
-    x = loadN5('jrc_fly-larva-1', 'labels/s2', 4816//4)
-    w.add_image(x, colormap='PiYG')
-    # x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s3/', 1116//2, False)
-    # w.add_image(x, colormap='PiYG')
-    # x = loadN5('jrc_fly-larva-1', 'em/tem-uint8/s5', 300)
-    # w.add_image(x, colormap='PiYG')
-    # x = loadN5('jrc_jurkat-1', 'em/fibsem-uint16/s4', 100)
-    # w.add_image(x, colormap='PiYG')
+    c,b,a = 12057, 12301, 6229 ## copied from neuroglancer
+    # x = loadZarr('jrc_mus-liver', 'recon-1/em/fibsem-uint8/s1', p2patch(a,b,c, s=1, const=0, hw=400), size_only=0, refresh_cache=0)
+
+    c,b,a = 6332, 942, 5620
+    # x = loadZarr('jrc_macrophage-2', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0, hw=200), size_only=0, refresh_cache=0)
+
+    c,b,a = 6417, 4150, 10157
+    x = loadZarr('jrc_mus-kidney', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0, hw=200), size_only=0, refresh_cache=0)
+    mp = 165, 250 ## mito query location
+
+    w.add_image(x)
+
+def p2patch(a, b, c, s=0, const=0, hw=200):
+    """Convert a neuroglancer center point to a tuple of slices.
+    s: number of times to halve coords (for lower-res scales).
+    const: which dimension (0,1,2) is held constant (the others become slices).
+    hw: half-width of the slice window.
+    """
+    coords = [a, b, c]
+    for _ in range(s):
+        coords = [x // 2 for x in coords]
+    print(coords)
+    result = []
+    for i, x in enumerate(coords):
+        if i == const:
+            result.append(x)
+        else:
+            result.append(slice(x - hw, x + hw))
+    return tuple(result)
 
 def load_dino():
     dinodir = "./../dinov3/"
@@ -101,9 +156,9 @@ def f5():
 
     # Time on a small 16x16 crop
     # x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s3/', 2233//4, False)
-    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s2/', 2233//2, False)
     a, b = 16*30, 16*60
-    x = x[a:b, a:b]
+    ss = (2233//2, slice(a,b), slice(a,b))
+    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s2/', ss)
     # x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s1/', 2233, False)
     # x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s0/', 2233, False)
     # print(x.shape)
