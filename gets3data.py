@@ -73,13 +73,42 @@ def load_remote(ds, subpath, slc, fmt='n5', size_only=False, refresh_cache=False
             clamped.append(s)
     slc = tuple(clamped)
 
+    # Remember original requested sizes for mirror-padding
+    orig_slc = slc_tuple  # before clamping
+
     ddata = da.from_array(zdata, chunks=zdata.chunks)
     print(ddata)
     if size_only: return
     with ProgressBar():
         result = ddata[slc].compute()
-        np.save(cache_file, result)
-        print(f"Saved to cache: {cache_file}")
+
+    # Mirror-pad if clamping made the result smaller than requested
+    pads = []
+    needs_pad = False
+    for dim, (orig, clamp) in enumerate(zip(orig_slc, slc)):
+        if isinstance(orig, slice) and isinstance(clamp, slice):
+            orig_lo = orig.start if orig.start is not None else 0
+            orig_hi = orig.stop if orig.stop is not None else shape[dim]
+            clamp_lo = clamp.start
+            clamp_hi = clamp.stop
+            pad_before = clamp_lo - orig_lo
+            pad_after = orig_hi - clamp_hi
+            if pad_before > 0 or pad_after > 0:
+                needs_pad = True
+            pads.append((max(pad_before, 0), max(pad_after, 0)))
+        else:
+            pads.append((0, 0))
+
+    if needs_pad:
+        # Only pad spatial dims (skip index dims that were removed)
+        spatial_pads = [p for p, s in zip(pads, orig_slc) if isinstance(s, slice)]
+        # result may have fewer dims than orig_slc if some were plain indices
+        assert len(spatial_pads) == result.ndim, f"Pad mismatch: {len(spatial_pads)} pads vs {result.ndim} dims"
+        result = np.pad(result, spatial_pads, mode='reflect')
+        print(f"Mirror-padded: {pads}")
+
+    np.save(cache_file, result)
+    print(f"Saved to cache: {cache_file}")
     return result
 
 def loadN5(ds, subpath, slc, **kwargs):
@@ -452,24 +481,23 @@ def f9(w, stride=4, patch_size=16):
         w.add_image(pca_img, name=name, rgb=True)
 
 
-def task1(n_samples=20, hw=512, scale='s2'):
-    """Download random 2D crops from liver and kidney datasets.
-    Samples n_samples random centerpoints per dataset, takes (2*hw)x(2*hw) crops at const z."""
+def task1(n_samples=20, crop_size=1024):
+    """Download random 2D crops from liver and kidney datasets at s0.
+    All crops are exactly crop_size x crop_size and fully within the volume."""
     np.random.seed(42)
 
     datasets = {
         'liver': {
             'ds': 'jrc_mus-liver',
-            'subpath': f'recon-1/em/fibsem-uint8/{scale}',
+            'subpath': 'recon-1/em/fibsem-uint8/s0',
         },
         'kidney': {
             'ds': 'jrc_mus-kidney',
-            'subpath': f'recon-1/em/fibsem-uint8/{scale}',
+            'subpath': 'recon-1/em/fibsem-uint8/s0',
         },
     }
 
     for dname, info in datasets.items():
-        # Get volume shape
         import s3fs
         fs = s3fs.S3FileSystem(anon=True)
         path = f's3://janelia-cosem-datasets/{info["ds"]}/{info["ds"]}.zarr'
@@ -480,14 +508,11 @@ def task1(n_samples=20, hw=512, scale='s2'):
         shape = zdata.shape  # (z, y, x)
         print(f"{dname}: volume shape = {shape}")
 
-        # Random centerpoints, ensuring crops stay in bounds
-        margin_z = 0
-        margin_yx = hw
-        zs = np.random.randint(margin_z, shape[0] - margin_z, size=n_samples)
-        ys = np.random.randint(margin_yx, shape[1] - margin_yx, size=n_samples)
-        xs = np.random.randint(margin_yx, shape[2] - margin_yx, size=n_samples)
+        zs = np.random.randint(0, shape[0], size=n_samples)
+        ys = np.random.randint(0, shape[1] - crop_size, size=n_samples)
+        xs = np.random.randint(0, shape[2] - crop_size, size=n_samples)
 
-        out_dir = os.path.join(CACHE_DIR, f'task1_{dname}_{scale}')
+        out_dir = os.path.join(CACHE_DIR, f'task1_{dname}')
         os.makedirs(out_dir, exist_ok=True)
 
         for i, (z, y, x) in enumerate(zip(zs, ys, xs)):
@@ -495,20 +520,20 @@ def task1(n_samples=20, hw=512, scale='s2'):
             if os.path.exists(out_file):
                 print(f"  [{i}] already exists: {out_file}")
                 continue
-            slc = (int(z), slice(int(y - hw), int(y + hw)), slice(int(x - hw), int(x + hw)))
+            slc = (int(z), slice(int(y), int(y + crop_size)), slice(int(x), int(x + crop_size)))
             img = load_remote(info['ds'], info['subpath'], slc, fmt='zarr')
             np.save(out_file, img)
             print(f"  [{i}] saved {img.shape} -> {out_file}")
 
         print(f"{dname}: {n_samples} crops saved to {out_dir}")
 
-def load_datasets(scale='s0'):
+def load_datasets():
     """Load all task1 crops into a dict keyed by dataset name.
     Returns {'liver': {'images': [np arrays], 'coords': [(z,y,x), ...]},
              'kidney': {...}}"""
     result = {}
     for dname in ['liver', 'kidney']:
-        out_dir = os.path.join(CACHE_DIR, f'task1_{dname}_{scale}')
+        out_dir = os.path.join(CACHE_DIR, f'task1_{dname}')
         assert os.path.isdir(out_dir), f"No data found at {out_dir}. Run task1() first."
         files = sorted([f for f in os.listdir(out_dir) if f.endswith('.npy')])
         images = []
@@ -525,8 +550,8 @@ def load_datasets(scale='s0'):
         print(f"{dname}: loaded {len(images)} images, shape={images[0].shape}")
     return result
 
-def show_datasets(w, scale='s0'):
-    data = load_datasets(scale)
+def show_datasets(w):
+    data = load_datasets()
     for dname in ['liver', 'kidney']:
         stack = np.stack(data[dname]['images'])  # (N, H, W)
         w.add_image(stack, name=dname)
@@ -539,7 +564,7 @@ def task2(w, stride=16, downsample_factor=1):
     model = load_dino()
     model.patch_embed.proj.stride = (stride, stride)
 
-    data = load_datasets('s0')
+    data = load_datasets()
 
     for dname in ['liver', 'kidney']:
         images = data[dname]['images']
