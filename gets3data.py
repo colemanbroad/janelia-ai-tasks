@@ -452,15 +452,60 @@ def f9(w, stride=4, patch_size=16):
         w.add_image(pca_img, name=name, rgb=True)
 
 
-def task1():
-    # c,b,a = 12057, 12301, 6229
-    c,b,a = 3754, 2619, 3515
-    img_liver = loadZarr('jrc_mus-liver', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
-    # c,b,a = 6417, 4150, 10157
-    # img_kidney = loadZarr('jrc_mus-kidney', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
+def task2(w, stride=8):
+    """Plot RGB PCA of DINO embeddings at s0-s3 resolutions for liver and kidney."""
+    patch_size = 16
+    model = load_dino()
+    model.patch_embed.proj.stride = (stride, stride)
 
-    # plot RGB PCA images for the above patch at s0,s1,s2, and s3 resolutions.
-    # Then do the same for the kidney data. 
+    datasets = {
+        'liver': {
+            'ds': 'jrc_mus-liver',
+            'subpath': 'recon-1/em/fibsem-uint8',
+            'center': (3515, 2619, 3754),  # a,b,c
+        },
+        'kidney': {
+            'ds': 'jrc_mus-kidney',
+            'subpath': 'recon-1/em/fibsem-uint8',
+            'center': (10157, 4150, 6417),  # a,b,c
+        },
+    }
+
+    for dname, info in datasets.items():
+        a, b, c = info['center']
+        for si in range(4):  # s0, s1, s2, s3
+            scale = f's{si}'
+            slc = p2patch(a, b, c, s=si, const=0, hw=200)
+            img = loadZarr(info['ds'], f"{info['subpath']}/{scale}", slc)
+            if img is None:
+                print(f"Skipping {dname} {scale}")
+                continue
+
+            H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
+            if H < 16 or W < 16:
+                print(f"Skipping {dname} {scale}: too small ({img.shape})")
+                continue
+            x_crop = img[:H, :W].astype(np.float32)
+
+            y_full = run_dino(model, x_crop)
+            tokens = y_full['x_norm_patchtokens'].squeeze(0).numpy()
+
+            pH = (H - patch_size) // stride + 1
+            pW = (W - patch_size) // stride + 1
+
+            pca = PCA(n_components=3)
+            pca_features = pca.fit_transform(tokens)
+            for i in range(3):
+                lo, hi = pca_features[:, i].min(), pca_features[:, i].max()
+                pca_features[:, i] = (pca_features[:, i] - lo) / (hi - lo + 1e-8)
+
+            pca_grid = pca_features.reshape(pH, pW, 3)
+            pca_img = overlap_average(pca_grid, H, W, patch_size, stride)
+
+            label = f'{dname} {scale}'
+            print(f"{label}: {img.shape} -> PCA {pca_img.shape}, var={pca.explained_variance_ratio_}")
+            w.add_image(x_crop, name=f'{label} raw')
+            w.add_image(pca_img, name=f'{label} PCA', rgb=True)
 
 def task3(w, stride=2):
     from skimage.feature import peak_local_max
