@@ -144,6 +144,25 @@ def run_dino(model, x_np):
     print(f"Inference: {dt:.3f}s for input {x_np.shape}")
     return y
 
+def test_estimate(stride=8):
+  model = load_dino()
+  model.patch_embed.proj.stride = (stride, stride)
+
+  c,b,a = 12057, 12301, 6229
+  img1 = loadZarr('jrc_mus-liver', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
+
+  c,b,a = 6417, 4150, 10157
+  img2 = loadZarr('jrc_mus-kidney', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
+
+  for name, img in [('mus-liver', img1), ('mus-kidney', img2)]:
+      print(f"=== {name} ({img.shape}) ===")
+      est = estimate_inference_time(model, img)
+      H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
+      t0 = time.time()
+      run_dino(model, img[:H, :W].astype(np.float32))
+      actual = time.time() - t0
+      print(f"  estimated: {est:.1f}s, actual: {actual:.1f}s, ratio: {est/actual:.2f}")
+
 def estimate_inference_time(model, img):
     """Estimate total inference time by running on small patches and extrapolating."""
     H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
@@ -187,7 +206,7 @@ def estimate_inference_time(model, img):
     print(f"  full image ({H}x{W}, {n_full} patches): ~{est:.1f}s ({est/60:.1f}min)")
     return est
 
-def run(w):
+def runf5(w):
     res = f5()
     w.add_image(res[0])
     w.add_image(res[1])
@@ -255,6 +274,53 @@ def f5():
 
     return (x, pca_img)
 
+def f7(w, k=8):
+    """K-means on DINO patch embeddings, then tile patches grouped by cluster."""
+    model = load_dino()
+
+    a, b = 16*30, 16*60
+    ss = (2233//2, slice(a,b), slice(a,b))
+    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s2/', ss)
+    H, W = (x.shape[0] // 16) * 16, (x.shape[1] // 16) * 16
+    x_crop = x[:H, :W]
+
+    y = run_dino(model, x_crop)
+    patch_tokens = y['x_norm_patchtokens'].squeeze(0).numpy()  # (N, 384)
+    pH, pW = H // 16, W // 16
+
+    # K-means clustering
+    kmeans = KMeans(n_clusters=k, random_state=0, n_init=10)
+    labels = kmeans.fit_predict(patch_tokens)  # (N,)
+    label_grid = labels.reshape(pH, pW)
+
+    # Extract 16x16 patches from the original image
+    patches = x_crop.reshape(pH, 16, pW, 16).transpose(0, 2, 1, 3)  # (pH, pW, 16, 16)
+
+    # For each cluster, collect its patches and tile them into a grid
+    cluster_images = []
+    for c in range(k):
+        mask = labels == c
+        cluster_patches = patches.reshape(-1, 16, 16)[mask]  # (n_c, 16, 16)
+        n_c = len(cluster_patches)
+        if n_c == 0:
+            continue
+        cols = int(np.ceil(np.sqrt(n_c)))
+        rows = int(np.ceil(n_c / cols))
+        # Pad to fill the grid
+        pad_count = rows * cols - n_c
+        if pad_count > 0:
+            padding = np.zeros((pad_count, 16, 16), dtype=cluster_patches.dtype)
+            cluster_patches = np.concatenate([cluster_patches, padding])
+        tile = cluster_patches.reshape(rows, cols, 16, 16).transpose(0, 2, 1, 3).reshape(rows * 16, cols * 16)
+        cluster_images.append(tile)
+
+    # Show label map and cluster tiles
+    label_img = np.repeat(np.repeat(label_grid, 16, axis=0), 16, axis=1)
+    w.add_image(x_crop, name='original')
+    w.add_image(label_img, name='cluster_labels', colormap='turbo')
+    for i, img in enumerate(cluster_images):
+        w.add_image(img, name=f'cluster_{i}')
+
 def overlap_average(feature_grid, H, W, patch_size, stride):
     """Average overlapping patches back into an image.
     feature_grid: (pH, pW, C), returns (H, W, C)."""
@@ -288,6 +354,7 @@ def lbp_patch_histograms(img, radius=1, n_points=8, patch_size=16, stride=2):
             features[i, j] = hist
     return features
 
+
 def f8test(w):
   # Mouse liver
   c,b,a = 12057, 12301, 6229
@@ -298,25 +365,6 @@ def f8test(w):
   c,b,a = 6417, 4150, 10157
   img2 = loadZarr('jrc_mus-kidney', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
   f8(w, img2, stride=8, name='mus-kidney')
-
-def test_estimate(stride=8):
-  model = load_dino()
-  model.patch_embed.proj.stride = (stride, stride)
-
-  c,b,a = 12057, 12301, 6229
-  img1 = loadZarr('jrc_mus-liver', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
-
-  c,b,a = 6417, 4150, 10157
-  img2 = loadZarr('jrc_mus-kidney', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
-
-  for name, img in [('mus-liver', img1), ('mus-kidney', img2)]:
-      print(f"=== {name} ({img.shape}) ===")
-      est = estimate_inference_time(model, img)
-      H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
-      t0 = time.time()
-      run_dino(model, img[:H, :W].astype(np.float32))
-      actual = time.time() - t0
-      print(f"  estimated: {est:.1f}s, actual: {actual:.1f}s, ratio: {est/actual:.2f}")
 
 def f8(w, img, stride=2, name=''):
     """Compare DINO PCA vs LBP histogram PCA on overlapping patches.
@@ -359,28 +407,6 @@ def f8(w, img, stride=2, name=''):
     w.add_image(x_crop, name=f'{pfx}original')
     # w.add_image(lbp_pca_img, name=f'{pfx}LBP_PCA', rgb=True)
     w.add_image(dino_pca_img, name=f'{pfx}DINO_PCA', rgb=True)
-
-def f11(w, sigma_range=(1, 3, 5, 9, 15)):
-    """Blur + threshold segmentation sweep on mus-kidney image."""
-    from scipy.ndimage import gaussian_filter
-    from skimage.filters import threshold_otsu
-
-    c, b, a = 6417, 4150, 10157
-    img = loadZarr('jrc_mus-kidney', 'recon-1/em/fibsem-uint8/s2', p2patch(a, b, c, s=2, const=0, hw=200))
-    img = img.astype(np.float32)
-
-    w.add_image(img, name='original')
-
-    from scipy.ndimage import label as ndlabel
-
-    for sigma in sigma_range:
-        blurred = gaussian_filter(img, sigma=sigma)
-        thresh = threshold_otsu(blurred)
-        mask = blurred < thresh  # mitos are dark in EM
-        labels, n_objects = ndlabel(mask)
-        w.add_image(blurred, name=f'blur_s{sigma}')
-        w.add_labels(labels, name=f'seg_s{sigma}')
-        print(f"sigma={sigma}: threshold={thresh:.1f}, mito_frac={mask.mean():.3f}, n_objects={n_objects}")
 
 def f9(w, stride=4, patch_size=16):
     """Test LBP with different (radius, n_points) combos side by side."""
@@ -479,49 +505,26 @@ def f10(w, query_yx=(107, 317), bg_yx=(232, 230), stride=2):
 
     return score_img
 
-def f7(w, k=8):
-    """K-means on DINO patch embeddings, then tile patches grouped by cluster."""
-    model = load_dino()
+def f11(w, sigma_range=(1, 3, 5, 9, 15)):
+    """Blur + threshold segmentation sweep on mus-kidney image."""
+    from scipy.ndimage import gaussian_filter
+    from skimage.filters import threshold_otsu
 
-    a, b = 16*30, 16*60
-    ss = (2233//2, slice(a,b), slice(a,b))
-    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s2/', ss)
-    H, W = (x.shape[0] // 16) * 16, (x.shape[1] // 16) * 16
-    x_crop = x[:H, :W]
+    c, b, a = 6417, 4150, 10157
+    img = loadZarr('jrc_mus-kidney', 'recon-1/em/fibsem-uint8/s2', p2patch(a, b, c, s=2, const=0, hw=200))
+    img = img.astype(np.float32)
 
-    y = run_dino(model, x_crop)
-    patch_tokens = y['x_norm_patchtokens'].squeeze(0).numpy()  # (N, 384)
-    pH, pW = H // 16, W // 16
+    w.add_image(img, name='original')
 
-    # K-means clustering
-    kmeans = KMeans(n_clusters=k, random_state=0, n_init=10)
-    labels = kmeans.fit_predict(patch_tokens)  # (N,)
-    label_grid = labels.reshape(pH, pW)
+    from scipy.ndimage import label as ndlabel
 
-    # Extract 16x16 patches from the original image
-    patches = x_crop.reshape(pH, 16, pW, 16).transpose(0, 2, 1, 3)  # (pH, pW, 16, 16)
+    for sigma in sigma_range:
+        blurred = gaussian_filter(img, sigma=sigma)
+        thresh = threshold_otsu(blurred)
+        mask = blurred < thresh  # mitos are dark in EM
+        labels, n_objects = ndlabel(mask)
+        w.add_image(blurred, name=f'blur_s{sigma}')
+        w.add_labels(labels, name=f'seg_s{sigma}')
+        print(f"sigma={sigma}: threshold={thresh:.1f}, mito_frac={mask.mean():.3f}, n_objects={n_objects}")
 
-    # For each cluster, collect its patches and tile them into a grid
-    cluster_images = []
-    for c in range(k):
-        mask = labels == c
-        cluster_patches = patches.reshape(-1, 16, 16)[mask]  # (n_c, 16, 16)
-        n_c = len(cluster_patches)
-        if n_c == 0:
-            continue
-        cols = int(np.ceil(np.sqrt(n_c)))
-        rows = int(np.ceil(n_c / cols))
-        # Pad to fill the grid
-        pad_count = rows * cols - n_c
-        if pad_count > 0:
-            padding = np.zeros((pad_count, 16, 16), dtype=cluster_patches.dtype)
-            cluster_patches = np.concatenate([cluster_patches, padding])
-        tile = cluster_patches.reshape(rows, cols, 16, 16).transpose(0, 2, 1, 3).reshape(rows * 16, cols * 16)
-        cluster_images.append(tile)
 
-    # Show label map and cluster tiles
-    label_img = np.repeat(np.repeat(label_grid, 16, axis=0), 16, axis=1)
-    w.add_image(x_crop, name='original')
-    w.add_image(label_img, name='cluster_labels', colormap='turbo')
-    for i, img in enumerate(cluster_images):
-        w.add_image(img, name=f'cluster_{i}')
