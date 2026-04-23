@@ -66,6 +66,14 @@ Or we can treat the image scale as a hyperparam to be fit/trained against ground
 In the end we just tried s0/s1/s2/s3 and eyeballed the PCA image embeddings.
 s2 appeared most effective for mouse liver data as it had the strongest visual correlation with mitos.
 
+---
+
+I've added the mouse kidney dataset in addition to liver and increased the n_patches per dataset from 1 -> 20. 
+I thought it would be different enough to give a mild test to generalization across acquisitions without being hopeless for task 3.
+But now I find very little signal in the RGB-PCA images.
+What could explain the difference?
+
+
 ## Task 2.2.2 -- Even more dense embeddings
 
 The DINO paper refers to per-patch embeddings that tile a full image as "dense",
@@ -76,7 +84,6 @@ To increase the resolution of our predictions we can
 2. equivalently, we can apply `avg(Tinv(model(T(x))))` for whole-image translations `T`.
 3. we can extend `T` to be any kind of information-preserving transformation over which our embeddings should be invariant.
 4. we can train a super-resolution model to intelligently enhance the results.
-
 
 ---
 

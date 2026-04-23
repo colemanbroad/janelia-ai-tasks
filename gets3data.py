@@ -592,11 +592,12 @@ def task2(w, stride=16, downsample_factor=1):
             all_tokens.append(tokens)
             n_patches_per_img.append(tokens.shape[0])
 
-        # Joint PCA across all images
+        # Joint PCA across all images — take 4 components, drop the first
         all_tokens_cat = np.concatenate(all_tokens, axis=0)
-        pca = PCA(n_components=3)
+        pca = PCA(n_components=4)
         all_pca = pca.fit_transform(all_tokens_cat)
         print(f"{dname}: joint PCA variance = {pca.explained_variance_ratio_}")
+        all_pca = all_pca[:, 1:]  # drop PC1, use PC2-4 as RGB
 
         # Normalize globally
         for i in range(3):
@@ -616,7 +617,7 @@ def task2(w, stride=16, downsample_factor=1):
 
             pca_grid = pca_features.reshape(pH, pW, 3)
             pca_tensor = torch.from_numpy(pca_grid).permute(2, 0, 1).unsqueeze(0)
-            pca_img = torch.nn.functional.interpolate(pca_tensor, size=(H, W), mode='nearest')
+            pca_img = torch.nn.functional.interpolate(pca_tensor, size=(H, W), mode='bilinear', align_corners=False)
             pca_img = pca_img.squeeze(0).permute(1, 2, 0).numpy()
 
             raw_stack.append(x_crop)
