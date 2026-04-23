@@ -502,6 +502,29 @@ def task1(n_samples=20, hw=512, scale='s2'):
 
         print(f"{dname}: {n_samples} crops saved to {out_dir}")
 
+def load_datasets(scale='s2'):
+    """Load all task1 crops into a dict keyed by dataset name.
+    Returns {'liver': {'images': [np arrays], 'coords': [(z,y,x), ...]},
+             'kidney': {...}}"""
+    result = {}
+    for dname in ['liver', 'kidney']:
+        out_dir = os.path.join(CACHE_DIR, f'task1_{dname}_{scale}')
+        assert os.path.isdir(out_dir), f"No data found at {out_dir}. Run task1() first."
+        files = sorted([f for f in os.listdir(out_dir) if f.endswith('.npy')])
+        images = []
+        coords = []
+        for f in files:
+            # Parse coords from filename: 00_z123_y456_x789.npy
+            parts = f.replace('.npy', '').split('_')
+            z = int(parts[1][1:])
+            y = int(parts[2][1:])
+            x = int(parts[3][1:])
+            images.append(np.load(os.path.join(out_dir, f)))
+            coords.append((z, y, x))
+        result[dname] = {'images': images, 'coords': coords}
+        print(f"{dname}: loaded {len(images)} images, shape={images[0].shape}")
+    return result
+
 def task2(w, stride=8):
     """Plot RGB PCA of DINO embeddings at s0-s3 resolutions for liver and kidney."""
     patch_size = 16
