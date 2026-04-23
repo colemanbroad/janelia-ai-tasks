@@ -452,6 +452,16 @@ def f9(w, stride=4, patch_size=16):
         w.add_image(pca_img, name=name, rgb=True)
 
 
+def task1():
+    # c,b,a = 12057, 12301, 6229
+    c,b,a = 3754, 2619, 3515
+    img_liver = loadZarr('jrc_mus-liver', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
+    # c,b,a = 6417, 4150, 10157
+    # img_kidney = loadZarr('jrc_mus-kidney', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
+
+    # plot RGB PCA images for the above patch at s0,s1,s2, and s3 resolutions.
+    # Then do the same for the kidney data. 
+
 def task3(w, stride=2):
     from skimage.feature import peak_local_max
     patch_size = 16
