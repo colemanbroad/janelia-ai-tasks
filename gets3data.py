@@ -452,10 +452,55 @@ def f9(w, stride=4, patch_size=16):
         w.add_image(pca_img, name=name, rgb=True)
 
 
-def task1():
-    # for both liver and kidney datasets determine the volume, then randomly sample
-    # 20 centerpoints from the volume and take 1024px wide crops with const z centered at each point.
-    # Download them and save them to disk.
+def task1(n_samples=20, hw=512, scale='s2'):
+    """Download random 2D crops from liver and kidney datasets.
+    Samples n_samples random centerpoints per dataset, takes (2*hw)x(2*hw) crops at const z."""
+    np.random.seed(42)
+
+    datasets = {
+        'liver': {
+            'ds': 'jrc_mus-liver',
+            'subpath': f'recon-1/em/fibsem-uint8/{scale}',
+        },
+        'kidney': {
+            'ds': 'jrc_mus-kidney',
+            'subpath': f'recon-1/em/fibsem-uint8/{scale}',
+        },
+    }
+
+    for dname, info in datasets.items():
+        # Get volume shape
+        import s3fs
+        fs = s3fs.S3FileSystem(anon=True)
+        path = f's3://janelia-cosem-datasets/{info["ds"]}/{info["ds"]}.zarr'
+        group = zarr.open(zarr.storage.FSStore(path, fs=fs, mode='r'))
+        zdata = group
+        for sub in info['subpath'].split('/'):
+            zdata = zdata[sub]
+        shape = zdata.shape  # (z, y, x)
+        print(f"{dname}: volume shape = {shape}")
+
+        # Random centerpoints, ensuring crops stay in bounds
+        margin_z = 0
+        margin_yx = hw
+        zs = np.random.randint(margin_z, shape[0] - margin_z, size=n_samples)
+        ys = np.random.randint(margin_yx, shape[1] - margin_yx, size=n_samples)
+        xs = np.random.randint(margin_yx, shape[2] - margin_yx, size=n_samples)
+
+        out_dir = os.path.join(CACHE_DIR, f'task1_{dname}_{scale}')
+        os.makedirs(out_dir, exist_ok=True)
+
+        for i, (z, y, x) in enumerate(zip(zs, ys, xs)):
+            out_file = os.path.join(out_dir, f'{i:02d}_z{z}_y{y}_x{x}.npy')
+            if os.path.exists(out_file):
+                print(f"  [{i}] already exists: {out_file}")
+                continue
+            slc = (int(z), slice(int(y - hw), int(y + hw)), slice(int(x - hw), int(x + hw)))
+            img = load_remote(info['ds'], info['subpath'], slc, fmt='zarr')
+            np.save(out_file, img)
+            print(f"  [{i}] saved {img.shape} -> {out_file}")
+
+        print(f"{dname}: {n_samples} crops saved to {out_dir}")
 
 def task2(w, stride=8):
     """Plot RGB PCA of DINO embeddings at s0-s3 resolutions for liver and kidney."""
