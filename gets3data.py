@@ -451,6 +451,79 @@ def f9(w, stride=4, patch_size=16):
         print(f"{name}  variance: {pca.explained_variance_ratio_}")
         w.add_image(pca_img, name=name, rgb=True)
 
+
+def task3(w, stride=2):
+    from skimage.feature import peak_local_max
+    patch_size = 16
+
+    model = load_dino()
+    model.patch_embed.proj.stride = (stride, stride)
+
+    # Load liver and kidney images
+    # c,b,a = 12057, 12301, 6229
+    c,b,a = 3754, 2619, 3515
+    img_liver = loadZarr('jrc_mus-liver', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
+    c,b,a = 6417, 4150, 10157
+    img_kidney = loadZarr('jrc_mus-kidney', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
+
+    # Mito query points (y, x) in each image
+    liver_mito = (44, 163)
+    kidney_mito = (165, 250)
+
+    datasets = {
+        'liver':  (img_liver,  liver_mito),
+        'kidney': (img_kidney, kidney_mito),
+    }
+
+    # Get stride=2 embeddings for each image: (pH, pW, 384)
+    embeddings = {}
+    crops = {}
+    for name, (img, _) in datasets.items():
+        H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
+        x_crop = img[:H, :W].astype(np.float32)
+        y_full = run_dino(model, x_crop)
+        tokens = y_full['x_norm_patchtokens'].squeeze(0)  # (N, 384)
+        pH = (H - patch_size) // stride + 1
+        pW = (W - patch_size) // stride + 1
+        embeddings[name] = (tokens, pH, pW, H, W)
+        crops[name] = x_crop
+
+    # Get query embedding at mito centerpoint for each dataset
+    queries = {}
+    for name, (img, mito_yx) in datasets.items():
+        tokens, pH, pW, H, W = embeddings[name]
+        qy, qx = mito_yx
+        qi = min(qy // stride, pH - 1)
+        qj = min(qx // stride, pW - 1)
+        queries[name] = torch.nn.functional.normalize(tokens[qi * pW + qj].unsqueeze(0), dim=-1)
+
+    # Add raw images
+    # w.add_image(crops['liver'], name='liver original')
+    # w.add_image(crops['kidney'], name='kidney original')
+
+    # Compute all 4 combinations: query from {liver,kidney} x target {liver,kidney}
+    for q_name in ['liver', 'kidney']:
+        query_emb = queries[q_name]
+        q_mito = datasets[q_name][1]
+        w.add_points(np.array([list(q_mito)]), name=f'{q_name} query', size=10, face_color='red')
+
+        for t_name in ['liver', 'kidney']:
+            tokens, pH, pW, H, W = embeddings[t_name]
+            patch_normed = torch.nn.functional.normalize(tokens, dim=-1)
+            cos_sim = (patch_normed @ query_emb.T).squeeze(-1).numpy()
+
+            sim_grid = cos_sim.reshape(pH, pW, 1)
+            sim_img = overlap_average(sim_grid, H, W, patch_size, stride).squeeze(-1)
+
+            peaks = peak_local_max(sim_img, min_distance=10, threshold_rel=0.3)
+            label = f'query={q_name} target={t_name}'
+            print(f"{label}: {len(peaks)} detections")
+
+
+            # w.add_image(crops[t_name], name=t_name + ' original')
+            # w.add_image(sim_img, name=f'{label} sim', colormap='inferno')
+            w.add_points(peaks, name=f'{label} detections', size=8, face_color='green')
+
 def mito_retrieval(w, img, query_yx, stride=2, min_distance=10, threshold_rel=0.3, name=''):
     """Cosine similarity retrieval from a query mito point.
     img: 2D grayscale numpy array.
