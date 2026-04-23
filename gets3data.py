@@ -531,68 +531,79 @@ def show_datasets(w, scale='s0'):
         stack = np.stack(data[dname]['images'])  # (N, H, W)
         w.add_image(stack, name=dname)
 
-def task2(w, stride=8):
-    """Plot RGB PCA of DINO embeddings at s0-s3 resolutions for liver and kidney."""
+def task2(w, stride=16, downsample_factor=1):
+    """Run DINO on all images in both datasets, joint PCA, scrollable in napari.
+    downsample_factor: locally downscale s0 images by this factor before running DINO."""
+    from skimage.transform import resize
     patch_size = 16
     model = load_dino()
     model.patch_embed.proj.stride = (stride, stride)
 
-    datasets = {
-        # 'liver': {
-        #     'ds': 'jrc_mus-liver',
-        #     'subpath': 'recon-1/em/fibsem-uint8',
-        #     'center': (3515, 2619, 3754),  # a,b,c
-        # },
-        'kidney': {
-            'ds': 'jrc_mus-kidney',
-            'subpath': 'recon-1/em/fibsem-uint8',
-            'center': (10157, 4150, 6417),  # a,b,c
-        },
-    }
+    data = load_datasets('s0')
 
-    for dname, info in datasets.items():
-        a, b, c = info['center']
-        for si in range(4):  # s0, s1, s2, s3
-            # if si in [1,3]: continue
-            scale = f's{si}'
-            slc = p2patch(a, b, c, s=si, const=0, hw=200)
-            img = loadZarr(info['ds'], f"{info['subpath']}/{scale}", slc)
-            if img is None:
-                print(f"Skipping {dname} {scale}")
-                continue
+    for dname in ['liver', 'kidney']:
+        images = data[dname]['images']
 
+        # Downscale and crop to patch-aligned dims
+        crops = []
+        for img in images:
+            img = img.astype(np.float32)
+            if downsample_factor > 1:
+                new_h, new_w = img.shape[0] // downsample_factor, img.shape[1] // downsample_factor
+                img = resize(img, (new_h, new_w), anti_aliasing=True, preserve_range=True).astype(np.float32)
             H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
-            if H < 16 or W < 16:
-                print(f"Skipping {dname} {scale}: too small ({img.shape})")
-                continue
-            x_crop = img[:H, :W].astype(np.float32)
+            crops.append(img[:H, :W])
 
+        # Use consistent H, W (all crops should be same size)
+        H, W = crops[0].shape
+
+        # Run DINO on all images, collect all tokens
+        all_tokens = []
+        n_patches_per_img = []
+        for i, x_crop in enumerate(crops):
+            print(f"{dname} [{i}] inference...")
             y_full = run_dino(model, x_crop)
             tokens = y_full['x_norm_patchtokens'].squeeze(0).numpy()
+            all_tokens.append(tokens)
+            n_patches_per_img.append(tokens.shape[0])
 
-            pH = (H - patch_size) // stride + 1
-            pW = (W - patch_size) // stride + 1
+        # Joint PCA across all images
+        all_tokens_cat = np.concatenate(all_tokens, axis=0)
+        pca = PCA(n_components=3)
+        all_pca = pca.fit_transform(all_tokens_cat)
+        print(f"{dname}: joint PCA variance = {pca.explained_variance_ratio_}")
 
-            pca = PCA(n_components=3)
-            pca_features = pca.fit_transform(tokens)
-            for i in range(3):
-                lo, hi = pca_features[:, i].min(), pca_features[:, i].max()
-                pca_features[:, i] = (pca_features[:, i] - lo) / (hi - lo + 1e-8)
+        # Normalize globally
+        for i in range(3):
+            lo, hi = all_pca[:, i].min(), all_pca[:, i].max()
+            all_pca[:, i] = (all_pca[:, i] - lo) / (hi - lo + 1e-8)
+
+        # Split back per image and upscale to full res
+        pH = (H - patch_size) // stride + 1
+        pW = (W - patch_size) // stride + 1
+        raw_stack = []
+        pca_stack = []
+        offset = 0
+        for i, x_crop in enumerate(crops):
+            n = n_patches_per_img[i]
+            pca_features = all_pca[offset:offset + n]
+            offset += n
 
             pca_grid = pca_features.reshape(pH, pW, 3)
-            if stride > 1:
-                # Bilinear interpolate to full resolution
-                pca_tensor = torch.from_numpy(pca_grid).permute(2, 0, 1).unsqueeze(0)  # (1, 3, pH, pW)
-                # pca_img = torch.nn.functional.interpolate(pca_tensor, size=(H, W), mode='bilinear', align_corners=False)
-                pca_img = torch.nn.functional.interpolate(pca_tensor, size=(H, W), mode='nearest')
-                pca_img = pca_img.squeeze(0).permute(1, 2, 0).numpy()  # (H, W, 3)
-            else:
-                pca_img = overlap_average(pca_grid, H, W, patch_size, stride)
+            pca_tensor = torch.from_numpy(pca_grid).permute(2, 0, 1).unsqueeze(0)
+            pca_img = torch.nn.functional.interpolate(pca_tensor, size=(H, W), mode='nearest')
+            pca_img = pca_img.squeeze(0).permute(1, 2, 0).numpy()
 
-            label = f'{dname} {scale}'
-            print(f"{label}: {img.shape} -> PCA {pca_img.shape}, var={pca.explained_variance_ratio_}")
-            w.add_image(x_crop, name=f'{label} raw')
-            w.add_image(pca_img, name=f'{label} PCA', rgb=True)
+            raw_stack.append(x_crop)
+            pca_stack.append(pca_img)
+
+        # Stack as (N, H, W) and (N, H, W, 3) for scrollable napari layers
+        raw_stack = np.stack(raw_stack)
+        pca_stack = np.stack(pca_stack)
+
+        label = f'{dname} {downsample_factor}x'
+        w.add_image(raw_stack, name=f'{label} raw')
+        w.add_image(pca_stack, name=f'{label} PCA', rgb=True)
 
 def task3(w, stride=2):
     from skimage.feature import peak_local_max
