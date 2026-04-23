@@ -227,48 +227,57 @@ def overlap_average(feature_grid, H, W, patch_size, stride):
     out /= counts
     return out.astype(np.float32)
 
+def lbp_patch_histograms(img, radius=1, n_points=8, patch_size=16, stride=2):
+    """Compute LBP histogram features for overlapping patches.
+    Returns (pH, pW, n_bins) array of normalized histograms."""
+    from skimage.feature import local_binary_pattern
+    H, W = img.shape[:2]
+    pH = (H - patch_size) // stride + 1
+    pW = (W - patch_size) // stride + 1
+    lbp_img = local_binary_pattern(img, n_points, radius, method='uniform')
+    n_bins = n_points + 2
+    features = np.zeros((pH, pW, n_bins), dtype=np.float32)
+    for i in range(pH):
+        for j in range(pW):
+            y0, x0 = i * stride, j * stride
+            patch = lbp_img[y0:y0+patch_size, x0:x0+patch_size]
+            hist, _ = np.histogram(patch, bins=n_bins, range=(0, n_bins), density=True)
+            features[i, j] = hist
+    return features
+
 def f8test(w):
   # Mouse liver
   c,b,a = 12057, 12301, 6229
   img1 = loadZarr('jrc_mus-liver', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
-  f8(w, img1, stride=2, name='mus-liver')
+  f8(w, img1, stride=8, name='mus-liver')
 
   # Another dataset
   c,b,a = 6417, 4150, 10157
   img2 = loadZarr('jrc_mus-kidney', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
-  f8(w, img2, stride=2, name='mus-kidney')
+  f8(w, img2, stride=8, name='mus-kidney')
 
 def f8(w, img, stride=2, name=''):
     """Compare DINO PCA vs LBP histogram PCA on overlapping patches.
     img: 2D numpy array (grayscale)."""
-    from skimage.feature import local_binary_pattern
     patch_size = 16
 
     H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
     x_crop = img[:H, :W].astype(np.float32)
 
     # --- LBP ---
-    radius, n_points = 1, 8
-    lbp_img = local_binary_pattern(x_crop, n_points, radius, method='uniform')
-    n_bins = n_points + 2
-
+    H, W = x_crop.shape[:2]
     pH = (H - patch_size) // stride + 1
     pW = (W - patch_size) // stride + 1
-    lbp_features = np.zeros((pH, pW, n_bins), dtype=np.float32)
-    for i in range(pH):
-        for j in range(pW):
-            y0, x0 = i * stride, j * stride
-            patch = lbp_img[y0:y0+patch_size, x0:x0+patch_size]
-            hist, _ = np.histogram(patch, bins=n_bins, range=(0, n_bins), density=True)
-            lbp_features[i, j] = hist
+    # lbp_features = lbp_patch_histograms(x_crop, stride=stride)
+    # pH, pW, n_bins = lbp_features.shape
 
-    pca_lbp = PCA(n_components=3)
-    lbp_pca = pca_lbp.fit_transform(lbp_features.reshape(-1, n_bins))
-    for i in range(3):
-        lo, hi = lbp_pca[:, i].min(), lbp_pca[:, i].max()
-        lbp_pca[:, i] = (lbp_pca[:, i] - lo) / (hi - lo + 1e-8)
-    lbp_pca_grid = lbp_pca.reshape(pH, pW, 3)
-    lbp_pca_img = overlap_average(lbp_pca_grid, H, W, patch_size, stride)
+    # pca_lbp = PCA(n_components=3)
+    # lbp_pca = pca_lbp.fit_transform(lbp_features.reshape(-1, n_bins))
+    # for i in range(3):
+    #     lo, hi = lbp_pca[:, i].min(), lbp_pca[:, i].max()
+    #     lbp_pca[:, i] = (lbp_pca[:, i] - lo) / (hi - lo + 1e-8)
+    # lbp_pca_grid = lbp_pca.reshape(pH, pW, 3)
+    # lbp_pca_img = overlap_average(lbp_pca_grid, H, W, patch_size, stride)
 
     # --- DINO ---
     model = load_dino()
@@ -286,13 +295,11 @@ def f8(w, img, stride=2, name=''):
 
     pfx = f'{name} ' if name else ''
     w.add_image(x_crop, name=f'{pfx}original')
-    w.add_image(lbp_pca_img, name=f'{pfx}LBP_PCA', rgb=True)
+    # w.add_image(lbp_pca_img, name=f'{pfx}LBP_PCA', rgb=True)
     w.add_image(dino_pca_img, name=f'{pfx}DINO_PCA', rgb=True)
 
 def f9(w, stride=4, patch_size=16):
     """Test LBP with different (radius, n_points) combos side by side."""
-    from skimage.feature import local_binary_pattern
-
     a, b = 16*30, 16*60
     ss = (2233*2, slice(a*4,b*4), slice(a*4,b*4))
     x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s0/', ss)
@@ -317,21 +324,11 @@ def f9(w, stride=4, patch_size=16):
 
     for radius, n_points in configs:
         t0 = time.time()
-        lbp_img = local_binary_pattern(x_crop, n_points, radius, method='uniform')
-        n_bins = n_points + 2
-
-        lbp_features = np.zeros((pH * pW, n_bins), dtype=np.float32)
-        idx = 0
-        for i in range(pH):
-            for j in range(pW):
-                y0, x0 = i * stride, j * stride
-                patch = lbp_img[y0:y0+patch_size, x0:x0+patch_size]
-                hist, _ = np.histogram(patch, bins=n_bins, range=(0, n_bins), density=True)
-                lbp_features[idx] = hist
-                idx += 1
+        lbp_features = lbp_patch_histograms(x_crop, radius=radius, n_points=n_points, patch_size=patch_size, stride=stride)
+        pH, pW, n_bins = lbp_features.shape
 
         pca = PCA(n_components=3)
-        pca_out = pca.fit_transform(lbp_features)
+        pca_out = pca.fit_transform(lbp_features.reshape(-1, n_bins))
         for c in range(3):
             lo, hi = pca_out[:, c].min(), pca_out[:, c].max()
             pca_out[:, c] = (pca_out[:, c] - lo) / (hi - lo + 1e-8)
