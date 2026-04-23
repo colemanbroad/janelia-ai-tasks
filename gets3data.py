@@ -227,25 +227,31 @@ def overlap_average(feature_grid, H, W, patch_size, stride):
     out /= counts
     return out.astype(np.float32)
 
-def f8(w, stride=2, patch_size=16):
-    """Compare DINO PCA vs LBP histogram PCA on overlapping patches."""
-    from skimage.feature import local_binary_pattern
+def f8test(w):
+  # Mouse liver
+  c,b,a = 12057, 12301, 6229
+  img1 = loadZarr('jrc_mus-liver', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
+  f8(w, img1, stride=2, name='mus-liver')
 
-    # Load image
-    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s0/', 2233*2, False)
-    # x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s2/', 2233//2, False)
-    # a, b = 16*30, 16*60
-    # x = x[a:b, a:b]
-    H, W = (x.shape[0] // 16) * 16, (x.shape[1] // 16) * 16
-    x_crop = x[:H, :W].astype(np.float32)
+  # Another dataset
+  c,b,a = 6417, 4150, 10157
+  img2 = loadZarr('jrc_mus-kidney', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
+  f8(w, img2, stride=2, name='mus-kidney')
+
+def f8(w, img, stride=2, name=''):
+    """Compare DINO PCA vs LBP histogram PCA on overlapping patches.
+    img: 2D numpy array (grayscale)."""
+    from skimage.feature import local_binary_pattern
+    patch_size = 16
+
+    H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
+    x_crop = img[:H, :W].astype(np.float32)
 
     # --- LBP ---
-    # Compute LBP image (uniform patterns, radius=1, 8 neighbors -> 10 bins)
     radius, n_points = 1, 8
     lbp_img = local_binary_pattern(x_crop, n_points, radius, method='uniform')
-    n_bins = n_points + 2  # 10 uniform bins
+    n_bins = n_points + 2
 
-    # Extract LBP histograms from overlapping patches
     pH = (H - patch_size) // stride + 1
     pW = (W - patch_size) // stride + 1
     lbp_features = np.zeros((pH, pW, n_bins), dtype=np.float32)
@@ -256,7 +262,6 @@ def f8(w, stride=2, patch_size=16):
             hist, _ = np.histogram(patch, bins=n_bins, range=(0, n_bins), density=True)
             lbp_features[i, j] = hist
 
-    # PCA on LBP histograms
     pca_lbp = PCA(n_components=3)
     lbp_pca = pca_lbp.fit_transform(lbp_features.reshape(-1, n_bins))
     for i in range(3):
@@ -279,15 +284,18 @@ def f8(w, stride=2, patch_size=16):
     dino_pca_grid = dino_pca.reshape(pH, pW, 3)
     dino_pca_img = overlap_average(dino_pca_grid, H, W, patch_size, stride)
 
-    w.add_image(x_crop, name='original')
-    w.add_image(lbp_pca_img, name='LBP_PCA', rgb=True)
-    w.add_image(dino_pca_img, name='DINO_PCA', rgb=True)
+    pfx = f'{name} ' if name else ''
+    w.add_image(x_crop, name=f'{pfx}original')
+    w.add_image(lbp_pca_img, name=f'{pfx}LBP_PCA', rgb=True)
+    w.add_image(dino_pca_img, name=f'{pfx}DINO_PCA', rgb=True)
 
 def f9(w, stride=4, patch_size=16):
     """Test LBP with different (radius, n_points) combos side by side."""
     from skimage.feature import local_binary_pattern
 
-    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s0/', 2233*2, False)
+    a, b = 16*30, 16*60
+    ss = (2233*2, slice(a*4,b*4), slice(a*4,b*4))
+    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s0/', ss)
     H, W = (x.shape[0] // 16) * 16, (x.shape[1] // 16) * 16
     x_crop = x[:H, :W].astype(np.float32)
 
@@ -343,7 +351,9 @@ def f10(w, query_yx=(107, 317), bg_yx=(232, 230), stride=2):
     model = load_dino()
     model.patch_embed.proj.stride = (stride, stride)
 
-    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s2/', 2233//2, False)
+    a, b = 16*30, 16*60
+    ss = (2233//2, slice(a,b), slice(a,b))
+    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s2/', ss)
     H, W = (x.shape[0] // 16) * 16, (x.shape[1] // 16) * 16
     x_crop = x[:H, :W]
 
@@ -392,7 +402,9 @@ def f7(w, k=8):
     """K-means on DINO patch embeddings, then tile patches grouped by cluster."""
     model = load_dino()
 
-    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s2/', 2233//2, False)
+    a, b = 16*30, 16*60
+    ss = (2233//2, slice(a,b), slice(a,b))
+    x = loadN5('jrc_mus-liver', 'em/fibsem-uint8/s2/', ss)
     H, W = (x.shape[0] // 16) * 16, (x.shape[1] // 16) * 16
     x_crop = x[:H, :W]
 

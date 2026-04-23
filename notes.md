@@ -118,7 +118,12 @@ bright background point like (232, 230)?
 
 This doesn't work at all. It just reveals dark gruanular patches.
 
-Ok, let's see how well this query point works on a different dataset 
+Ok, let's see how well this query point works on a different dataset...
+
+There is a mito centerpoint at (165,250) in the mouse kidney.
+These mitos are very dark, and a simple blur+threshold could be enough to segment them.
+
+
 
 ##  Task 2.4.1 -- Improving on DINO
 
