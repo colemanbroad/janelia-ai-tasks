@@ -502,7 +502,7 @@ def task1(n_samples=20, hw=512, scale='s2'):
 
         print(f"{dname}: {n_samples} crops saved to {out_dir}")
 
-def load_datasets(scale='s2'):
+def load_datasets(scale='s0'):
     """Load all task1 crops into a dict keyed by dataset name.
     Returns {'liver': {'images': [np arrays], 'coords': [(z,y,x), ...]},
              'kidney': {...}}"""
@@ -524,6 +524,12 @@ def load_datasets(scale='s2'):
         result[dname] = {'images': images, 'coords': coords}
         print(f"{dname}: loaded {len(images)} images, shape={images[0].shape}")
     return result
+
+def show_datasets(w, scale='s0'):
+    data = load_datasets(scale)
+    for dname in ['liver', 'kidney']:
+        stack = np.stack(data[dname]['images'])  # (N, H, W)
+        w.add_image(stack, name=dname)
 
 def task2(w, stride=8):
     """Plot RGB PCA of DINO embeddings at s0-s3 resolutions for liver and kidney."""
