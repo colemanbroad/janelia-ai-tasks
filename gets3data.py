@@ -144,6 +144,49 @@ def run_dino(model, x_np):
     print(f"Inference: {dt:.3f}s for input {x_np.shape}")
     return y
 
+def estimate_inference_time(model, img):
+    """Estimate total inference time by running on small patches and extrapolating."""
+    H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
+    n_full = (H // 16) * (W // 16)
+
+    # Use two moderately sized crops to reduce warmup noise and capture quadratic scaling
+    # n1 ~ 1/4 of patches, n2 ~ 1/2 of patches
+    h1, w1 = max(H // 4, 16), max(W // 4, 16)
+    h2, w2 = max(H // 2, 16), max(W // 2, 16)
+    h1, w1 = (h1 // 16) * 16, (w1 // 16) * 16
+    h2, w2 = (h2 // 16) * 16, (w2 // 16) * 16
+    n1 = (h1 // 16) * (w1 // 16)
+    n2 = (h2 // 16) * (w2 // 16)
+
+    # Warmup with both sizes
+    run_dino(model, img[:h1, :w1].astype(np.float32))
+    run_dino(model, img[:h2, :w2].astype(np.float32))
+
+    # Timed runs
+    t0 = time.time()
+    run_dino(model, img[:h1, :w1].astype(np.float32))
+    t1 = time.time() - t0
+
+    t0 = time.time()
+    run_dino(model, img[:h2, :w2].astype(np.float32))
+    t2 = time.time() - t0
+
+    # Fit quadratic: time = a * n^2 + b * n, solve from two points
+    # t1 = a*n1^2 + b*n1, t2 = a*n2^2 + b*n2
+    det = n1**2 * n2 - n2**2 * n1
+    if abs(det) > 1e-12:
+        a = (t1 * n2 - t2 * n1) / det
+        b = (t2 * n1**2 - t1 * n2**2) / det
+        est = a * n_full**2 + b * n_full
+    else:
+        # Fallback to linear
+        slope = (t2 - t1) / (n2 - n1)
+        est = t1 + slope * (n_full - n1)
+
+    print(f"  size1: {h1}x{w1} ({n1}p) = {t1:.3f}s, size2: {h2}x{w2} ({n2}p) = {t2:.3f}s")
+    print(f"  full image ({H}x{W}, {n_full} patches): ~{est:.1f}s ({est/60:.1f}min)")
+    return est
+
 def run(w):
     res = f5()
     w.add_image(res[0])
@@ -255,6 +298,25 @@ def f8test(w):
   c,b,a = 6417, 4150, 10157
   img2 = loadZarr('jrc_mus-kidney', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
   f8(w, img2, stride=8, name='mus-kidney')
+
+def test_estimate(stride=8):
+  model = load_dino()
+  model.patch_embed.proj.stride = (stride, stride)
+
+  c,b,a = 12057, 12301, 6229
+  img1 = loadZarr('jrc_mus-liver', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
+
+  c,b,a = 6417, 4150, 10157
+  img2 = loadZarr('jrc_mus-kidney', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
+
+  for name, img in [('mus-liver', img1), ('mus-kidney', img2)]:
+      print(f"=== {name} ({img.shape}) ===")
+      est = estimate_inference_time(model, img)
+      H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
+      t0 = time.time()
+      run_dino(model, img[:H, :W].astype(np.float32))
+      actual = time.time() - t0
+      print(f"  estimated: {est:.1f}s, actual: {actual:.1f}s, ratio: {est/actual:.2f}")
 
 def f8(w, img, stride=2, name=''):
     """Compare DINO PCA vs LBP histogram PCA on overlapping patches.
