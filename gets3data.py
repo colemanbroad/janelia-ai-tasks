@@ -220,6 +220,16 @@ def run_dino_dense(model, x_np, dense_stride=4, subtract_pos=True):
     return accum
 
 
+def prep_image(img, downsample_factor=1):
+    """Downscale and crop to patch-aligned (multiple of 16) dimensions."""
+    from skimage.transform import resize
+    img = img.astype(np.float32)
+    if downsample_factor > 1:
+        new_h, new_w = img.shape[0] // downsample_factor, img.shape[1] // downsample_factor
+        img = resize(img, (new_h, new_w), anti_aliasing=True, preserve_range=True).astype(np.float32)
+    H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
+    return img[:H, :W]
+
 def task1(n_samples=20, crop_size=1024):
     """Download random 2D crops from liver and kidney datasets at s0.
     All crops are exactly crop_size x crop_size and fully within the volume."""
@@ -301,7 +311,6 @@ def task2(w, stride=16, downsample_factor=1, n_images=3, mode='nearest', dense=F
     downsample_factor: locally downscale s0 images by this factor before running DINO.
     n_images: how many images per dataset to use.
     dense: if True, use run_dino_dense (translated passes at native stride=16) instead of hacking stride."""
-    from skimage.transform import resize
     patch_size = 16
     model = load_dino()
     if not dense:
@@ -313,14 +322,7 @@ def task2(w, stride=16, downsample_factor=1, n_images=3, mode='nearest', dense=F
         images = data[dname]['images'][:n_images]
 
         # Downscale and crop to patch-aligned dims
-        crops = []
-        for img in images:
-            img = img.astype(np.float32)
-            if downsample_factor > 1:
-                new_h, new_w = img.shape[0] // downsample_factor, img.shape[1] // downsample_factor
-                img = resize(img, (new_h, new_w), anti_aliasing=True, preserve_range=True).astype(np.float32)
-            H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
-            crops.append(img[:H, :W])
+        crops = [prep_image(img, downsample_factor) for img in images]
 
         H, W = crops[0].shape
 
@@ -381,7 +383,6 @@ def task2(w, stride=16, downsample_factor=1, n_images=3, mode='nearest', dense=F
         w.add_image(raw_stack, name=f'{label} raw')
         w.add_image(pca_stack, name=f'{label} PCA', rgb=True)
 
-
         
 def mitolocations():
     """Lists hold mito centerpoints for the first few images in each dataset. One point per image."""
@@ -410,12 +411,10 @@ def run_everything():
     task1()
 
     ## Task 2: Dense DINO embeddings + joint PCA visualized as RGB across multiple images.
-    task2(w, stride=2, downsample_factor=2, n_images=4, dense=True, subtract_pos=False)
+    task2(w, stride=2, downsample_factor=2, n_images=4, dense=True, subtract_pos=True)
 
     ## Task 3: Mito retrieval — average cosine similarity from 7 kidney query points across 7 kidney targets.
     task3(w, query_ds='kidney', target_ds='kidney', query_idxs=[0,1,2,3,4,5,6], n_targets=7, downsample_factor=2, dense_stride=2)
-
-
 
 
 def task3(w, query_ds='kidney', target_ds='kidney', query_idxs=None, n_targets=3,
@@ -425,29 +424,21 @@ def task3(w, query_ds='kidney', target_ds='kidney', query_idxs=None, n_targets=3
     query_idxs: which mito points to use as queries (indices into mitolocations). None = all.
     n_targets: how many target images to predict on.
     Results are collected into scrollable stacks."""
-    from skimage.transform import resize
     patch_size = 16
 
     model = load_dino()
     data = load_datasets()
     mitos = mitolocations()
 
-    # --- Build averaged query embedding ---
-    query_points = mitos[query_ds]
-    if query_idxs is not None:
-        query_points = [query_points[i] for i in query_idxs] ## could this be a list comp?
-    else:
-        query_idxs = list(range(len(query_points))) ## Q: why do this?
+    # --- Select query points ---
+    if query_idxs is None:
+        query_idxs = list(range(len(mitos[query_ds])))
+    query_points = [mitos[query_ds][i] for i in query_idxs]
 
     # --- Collect query embeddings (normalized, not averaged yet) ---
     query_embs = []  # list of (1, D) normalized tensors
     for i, mito_yx in zip(query_idxs, query_points):
-        img = data[query_ds]['images'][i].astype(np.float32)
-        if downsample_factor > 1:
-            new_h, new_w = img.shape[0] // downsample_factor, img.shape[1] // downsample_factor
-            img = resize(img, (new_h, new_w), anti_aliasing=True, preserve_range=True).astype(np.float32)
-        H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
-        x_crop = img[:H, :W]
+        x_crop = prep_image(data[query_ds]['images'][i], downsample_factor)
 
         print(f"Query {query_ds}[{i}]: computing embeddings...")
         token_grid = run_dino_dense(model, x_crop, dense_stride=dense_stride)
@@ -466,12 +457,7 @@ def task3(w, query_ds='kidney', target_ds='kidney', query_idxs=None, n_targets=3
     sim_stack = []
 
     for i, img in enumerate(target_images):
-        img = img.astype(np.float32)
-        if downsample_factor > 1:
-            new_h, new_w = img.shape[0] // downsample_factor, img.shape[1] // downsample_factor
-            img = resize(img, (new_h, new_w), anti_aliasing=True, preserve_range=True).astype(np.float32)
-        H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
-        x_crop = img[:H, :W]
+        x_crop = prep_image(img, downsample_factor)
 
         print(f"Target {target_ds}[{i}]: computing embeddings...")
         token_grid = run_dino_dense(model, x_crop, dense_stride=dense_stride)
