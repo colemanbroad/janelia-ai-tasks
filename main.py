@@ -519,9 +519,89 @@ def task3(w, query_ds='kidney', target_ds='kidney', query_idxs=None, n_targets=3
     raw_stack = np.stack(raw_stack)
     sim_stack = np.stack(sim_stack)
 
-    label = f'q={query_ds}[{query_idxs}] t={target_ds}'
-    w.add_image(raw_stack, name=f'{label} raw')
-    w.add_image(sim_stack, name=f'{label} sim', colormap='inferno')
+    if w is not None:
+        label = f'q={query_ds}[{query_idxs}] t={target_ds}'
+        w.add_image(raw_stack, name=f'{label} raw')
+        w.add_image(sim_stack, name=f'{label} sim', colormap='inferno')
+
+    return raw_stack, sim_stack
+
+def _tile_grid(images, ncols=None):
+    """Tile a list of 2D images into a single grid image."""
+    n = len(images)
+    if ncols is None:
+        ncols = int(np.ceil(np.sqrt(n)))
+    nrows = int(np.ceil(n / ncols))
+    H, W = images[0].shape
+    grid = np.zeros((nrows * H, ncols * W), dtype=images[0].dtype)
+    for idx, img in enumerate(images):
+        r, c = divmod(idx, ncols)
+        grid[r*H:(r+1)*H, c*W:(c+1)*W] = img
+    return grid
+
+def task3_all(dense_stride=8, downsample_factor=2, out_dir='figures'):
+    """Run task3 for all 4 query/target combinations and save tiled grids as PNGs."""
+    import matplotlib.pyplot as plt
+    os.makedirs(out_dir, exist_ok=True)
+
+    mitos = mitolocations()
+    data = load_datasets()
+    combos = [
+        ('kidney', 'kidney'),
+        ('kidney', 'liver'),
+        ('liver', 'liver'),
+        ('liver', 'kidney'),
+    ]
+
+    for query_ds, target_ds in combos:
+        query_idxs = list(range(len(mitos[query_ds])))
+        n_targets = len(data[target_ds]['images'])
+        print(f"\n=== q={query_ds} t={target_ds} ({len(query_idxs)} queries, {n_targets} targets) ===")
+        raw_stack, sim_stack = task3(
+            w=None, query_ds=query_ds, target_ds=target_ds,
+            query_idxs=query_idxs, n_targets=n_targets,
+            dense_stride=dense_stride, downsample_factor=downsample_factor,
+        )
+
+        # Tile raw and sim grids
+        raw_grid = _tile_grid(list(raw_stack))
+        sim_grid = _tile_grid(list(sim_stack))
+
+        # Normalize sim: clamp lower bound, scale to [0,1], apply gamma
+        # lb and gamma determined by visual inspection
+        sim_norm = (sim_grid - 0.533) / (sim_grid.max() - 0.533 + 1e-8)
+        sim_norm = np.clip(sim_norm, 0, 1)
+        sim_norm = sim_norm ** (1.0 / 1.8)
+
+        # Save raw grid
+        fig, ax = plt.subplots(1, 1, figsize=(12, 12))
+        ax.imshow(raw_grid, cmap='gray')
+        ax.set_title(f'Raw: query={query_ds}, target={target_ds}')
+        ax.axis('off')
+        raw_path = os.path.join(out_dir, f'task3_raw_q{query_ds}_t{target_ds}.png')
+        fig.savefig(raw_path, bbox_inches='tight', dpi=150)
+        plt.close(fig)
+
+        # Save sim grid
+        fig, ax = plt.subplots(1, 1, figsize=(12, 12))
+        ax.imshow(sim_norm, cmap='inferno')
+        ax.set_title(f'Similarity: query={query_ds}, target={target_ds}')
+        ax.axis('off')
+        sim_path = os.path.join(out_dir, f'task3_sim_q{query_ds}_t{target_ds}.png')
+        fig.savefig(sim_path, bbox_inches='tight', dpi=150)
+        plt.close(fig)
+
+        # Combine raw and sim into an oscillating GIF
+        from PIL import Image
+        raw_pil = Image.open(raw_path)
+        sim_pil = Image.open(sim_path)
+        gif_path = os.path.join(out_dir, f'task3_q{query_ds}_t{target_ds}.gif')
+        raw_pil.save(gif_path, save_all=True, append_images=[sim_pil],
+                     duration=1000, loop=0)
+
+        print(f"  Saved {raw_path}")
+        print(f"  Saved {sim_path}")
+        print(f"  Saved {gif_path}")
 
 if __name__ == '__main__':
     run_everything()

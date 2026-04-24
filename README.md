@@ -96,6 +96,25 @@ Parameters:
 - `query_idxs`: which annotated mito points to use (see `mitolocations()`).
 - `n_targets`: number of target images to predict on.
 
+To generate all four query/target combinations and save tiled grids:
+
+```python
+from main import task3_all
+task3_all(dense_stride=2, downsample_factor=2, n_targets=4)
+```
+
+#### Within-dataset retrieval
+
+Kidney query on kidney targets | Liver query on liver targets
+:---: | :---:
+<img src="figures/task3_qkidney_tkidney.gif" width="400"> | <img src="figures/task3_qliver_tliver.gif" width="400">
+
+#### Cross-dataset retrieval
+
+Kidney query on liver targets | Liver query on kidney targets
+:---: | :---:
+<img src="figures/task3_qkidney_tliver.gif" width="400"> | <img src="figures/task3_qliver_tkidney.gif" width="400">
+
 ### Run Everything
 
 ```python

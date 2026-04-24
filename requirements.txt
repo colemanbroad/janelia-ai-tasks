@@ -6,3 +6,7 @@ s3fs
 scikit-learn
 scikit-image
 napari[all]
+matplotlib
+torchvision
+torchmetrics
+termcolor
