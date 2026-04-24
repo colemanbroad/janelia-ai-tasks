@@ -134,6 +134,21 @@ Let's first just run with stride 16 and see how different neighboring patches ar
 Actually, the 'nearest' method of interp still may still have a high frequency artifacts? 
 I guess it's not just a trick of bilinear interp.
 
+Yes! This approach to dense predictions produces much better results.
+Smoother (although still with 16px grid artifacts) and more consistent colors.
+BUT now the global positional color pattern is back.
+The predictions always go from Red (bottom left) -> Blue/Green (top right).
+
+It looks like we can somewhat compensate for the underlying ROPE embeddings by passing
+a const grey image forward through the model and subtracting the results. This is obviously
+wrong, because the ViT is not additive, but it appears to help somewhat.
+
+
+
+Now let's
+1. try with higher-res imagery (looks the same but high res. This is what we expect).
+2. larger model
+
 
 ## Task 2.3.1 -- Embedding-Based Retrieval & Visualization
 
@@ -180,3 +195,4 @@ We could also do linear-probing using a small amount of the existing ground trut
 # Todo
 
 -[ ] fix requirements.txt
+-[ ] make sure docstrings are consistent with code

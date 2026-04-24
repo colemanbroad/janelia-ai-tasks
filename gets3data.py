@@ -173,37 +173,19 @@ def run_dino(model, x_np):
     print(f"Inference: {dt:.3f}s for input {x_np.shape}")
     return y
 
-def run_dino_dense(model, x_np, dense_stride=4):
-    """Dense DINO embeddings via translated passes with native stride=16.
-    Runs the model at each (dy, dx) offset in [0, dense_stride) x [0, dense_stride),
-    then stitches the non-overlapping patch grids back together.
-    Returns (pH, pW, embed_dim) numpy array at effective stride=dense_stride."""
-    patch_size = 16
-    assert patch_size % dense_stride == 0, f"dense_stride={dense_stride} must divide patch_size={patch_size}"
-
-    H, W = x_np.shape
-    # Output grid at effective stride
+def _run_dense_passes(model, x_2d, dense_stride, patch_size=16):
+    """Run translated passes on a pre-normalized 2D array. Returns (pH, pW, D) accumulator."""
+    H, W = x_2d.shape
     pH = (H - patch_size) // dense_stride + 1
     pW = (W - patch_size) // dense_stride + 1
 
-    # Prepare input normalization once
-    x = x_np.astype(np.float32)
-    mu, std = x.mean(), x.std()
-    x = (x - mu) / std
-    x = x * 0.229 + 0.485
-
-    # Accumulate embeddings
     embed_dim = None
     accum = None
     counts = None
 
-    n_offsets = patch_size // dense_stride
-    t0 = time.time()
-
     for dy in range(0, patch_size, dense_stride):
         for dx in range(0, patch_size, dense_stride):
-            # Crop with offset so native stride-16 patches land at different positions
-            x_shift = x[dy:, dx:]
+            x_shift = x_2d[dy:, dx:]
             h_s, w_s = x_shift.shape
             h_s = (h_s // patch_size) * patch_size
             w_s = (w_s // patch_size) * patch_size
@@ -216,25 +198,21 @@ def run_dino_dense(model, x_np, dense_stride=4):
 
             with torch.no_grad():
                 y = model.forward_features(x_tensor)
-            tokens = y['x_norm_patchtokens'].squeeze(0).numpy()  # (n_patches, D)
+            tokens = y['x_norm_patchtokens'].squeeze(0).numpy()
 
             if embed_dim is None:
                 embed_dim = tokens.shape[1]
                 accum = np.zeros((pH, pW, embed_dim), dtype=np.float64)
                 counts = np.zeros((pH, pW, 1), dtype=np.float64)
 
-            # Native stride=16 patch grid for this offset
             pH_s = h_s // patch_size
             pW_s = w_s // patch_size
             tokens = tokens.reshape(pH_s, pW_s, embed_dim)
 
-            # Map back to the output grid
             for pi in range(pH_s):
                 for pj in range(pW_s):
-                    # Pixel position of this patch center in original image
                     oi = dy + pi * patch_size
                     oj = dx + pj * patch_size
-                    # Output grid index
                     gi = oi // dense_stride
                     gj = oj // dense_stride
                     if gi < pH and gj < pW:
@@ -242,9 +220,39 @@ def run_dino_dense(model, x_np, dense_stride=4):
                         counts[gi, gj] += 1
 
     accum /= np.maximum(counts, 1)
-    dt = time.time() - t0
-    print(f"Dense inference ({n_offsets}x{n_offsets} offsets): {dt:.1f}s for input {x_np.shape} -> ({pH},{pW},{embed_dim})")
     return accum.astype(np.float32)
+
+def run_dino_dense(model, x_np, dense_stride=4, subtract_pos=True):
+    """Dense DINO embeddings via translated passes with native stride=16.
+    If subtract_pos, subtracts a positional baseline computed from a constant image.
+    Returns (pH, pW, embed_dim) numpy array at effective stride=dense_stride."""
+    patch_size = 16
+    assert patch_size % dense_stride == 0, f"dense_stride={dense_stride} must divide patch_size={patch_size}"
+
+    H, W = x_np.shape
+
+    # Prepare input normalization
+    x = x_np.astype(np.float32)
+    mu, std = x.mean(), x.std() + 1e-8
+    x = (x - mu) / std
+    x = x * 0.229 + 0.485
+
+    n_offsets = patch_size // dense_stride
+    t0 = time.time()
+
+    accum = _run_dense_passes(model, x, dense_stride, patch_size)
+
+    if subtract_pos:
+        # Run same passes on a constant image to get positional baseline
+        x_const = np.full_like(x, 0.485)  # ImageNet mean
+        baseline = _run_dense_passes(model, x_const, dense_stride, patch_size)
+        accum = accum - baseline
+        print(f"  Subtracted positional baseline")
+
+    dt = time.time() - t0
+    pH, pW = accum.shape[:2]
+    print(f"Dense inference ({n_offsets}x{n_offsets} offsets): {dt:.1f}s for input {x_np.shape} -> {accum.shape}")
+    return accum
 
 def test_estimate(stride=8):
   model = load_dino()
@@ -334,8 +342,6 @@ def f5():
     print("Small crop output keys:", list(y_small.keys()))
     ## TODO: make a dumb, approximate upper bound predition on inference time by extrapolating from
     # the times required to run inf on 1) a 16x16 patch and then 2) a 32x16 patch and linearly extrapolating.
-
-    # ipdb.set_trace()
 
     # Full slice — crop to patch-aligned dims
     H, W = (x.shape[0] // 16) * 16, (x.shape[1] // 16) * 16
@@ -629,14 +635,17 @@ def show_datasets(w):
         stack = np.stack(data[dname]['images'])  # (N, H, W)
         w.add_image(stack, name=dname)
 
-def task2(w, stride=16, downsample_factor=1, n_images=3, mode='nearest'):
-    """Run DINO on images, per-image mean subtraction, per-image PCA, scrollable in napari.
+def task2(w, stride=16, downsample_factor=1, n_images=3, mode='nearest', dense=False, subtract_pos=True):
+    """Run DINO on images, per-image mean subtraction, joint PCA, scrollable in napari.
+    stride: patch embedding stride (ignored if dense=True).
     downsample_factor: locally downscale s0 images by this factor before running DINO.
-    n_images: how many images per dataset to use."""
+    n_images: how many images per dataset to use.
+    dense: if True, use run_dino_dense (translated passes at native stride=16) instead of hacking stride."""
     from skimage.transform import resize
     patch_size = 16
     model = load_dino()
-    model.patch_embed.proj.stride = (stride, stride)
+    if not dense:
+        model.patch_embed.proj.stride = (stride, stride)
 
     data = load_datasets()
 
@@ -654,18 +663,23 @@ def task2(w, stride=16, downsample_factor=1, n_images=3, mode='nearest'):
             crops.append(img[:H, :W])
 
         H, W = crops[0].shape
-        pH = (H - patch_size) // stride + 1
-        pW = (W - patch_size) // stride + 1
 
-        # Run DINO on all images, collect tokens
+        # Run DINO on all images, collect tokens + grid shapes
         all_tokens = []
-        n_patches_per_img = []
+        grid_shapes = []
         for i, x_crop in enumerate(crops):
             print(f"{dname} [{i}] inference...")
-            y_full = run_dino(model, x_crop)
-            tokens = y_full['x_norm_patchtokens'].squeeze(0).numpy()
+            if dense:
+                token_grid = run_dino_dense(model, x_crop, dense_stride=stride, subtract_pos=subtract_pos)  # (pH, pW, D)
+                pH_i, pW_i = token_grid.shape[:2]
+                tokens = token_grid.reshape(-1, token_grid.shape[2])
+            else:
+                y_full = run_dino(model, x_crop)
+                tokens = y_full['x_norm_patchtokens'].squeeze(0).numpy()
+                pH_i = (H - patch_size) // stride + 1
+                pW_i = (W - patch_size) // stride + 1
             all_tokens.append(tokens)
-            n_patches_per_img.append(tokens.shape[0])
+            grid_shapes.append((pH_i, pW_i))
 
         # Per-image mean subtraction, then joint PCA
         for i in range(len(all_tokens)):
@@ -686,13 +700,15 @@ def task2(w, stride=16, downsample_factor=1, n_images=3, mode='nearest'):
         pca_stack = []
         offset = 0
         for i, x_crop in enumerate(crops):
-            n = n_patches_per_img[i]
+            pH_i, pW_i = grid_shapes[i]
+            n = pH_i * pW_i
             pca_features = all_pca[offset:offset + n]
             offset += n
 
-            pca_grid = pca_features.reshape(pH, pW, 3)
+            pca_grid = pca_features.reshape(pH_i, pW_i, 3)
             pca_tensor = torch.from_numpy(pca_grid).permute(2, 0, 1).unsqueeze(0)
-            pca_img = torch.nn.functional.interpolate(pca_tensor, size=(H, W), mode=mode, align_corners=dict(bilinear=False, nearest=None)[mode])
+            ac = dict(bilinear=False, nearest=None)[mode]
+            pca_img = torch.nn.functional.interpolate(pca_tensor, size=(H, W), mode=mode, align_corners=ac)
             pca_img = pca_img.squeeze(0).permute(1, 2, 0).numpy()
 
             raw_stack.append(x_crop)
@@ -701,7 +717,7 @@ def task2(w, stride=16, downsample_factor=1, n_images=3, mode='nearest'):
         raw_stack = np.stack(raw_stack)
         pca_stack = np.stack(pca_stack)
 
-        label = f'{dname} {downsample_factor}x'
+        label = f'{dname} {"dense" if dense else "stride"}{stride} {downsample_factor}x'
         w.add_image(raw_stack, name=f'{label} raw')
         w.add_image(pca_stack, name=f'{label} PCA', rgb=True)
 
