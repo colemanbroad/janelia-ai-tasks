@@ -72,6 +72,20 @@ I've added the mouse kidney dataset in addition to liver and increased the n_pat
 I thought it would be different enough to give a mild test to generalization across acquisitions without being hopeless for task 3.
 But now I find very little signal in the RGB-PCA images.
 What could explain the difference?
+per-image feature normalization and PCA?
+
+This doesn't seem to be enough...
+
+I still see patterns within an individual mitochondria. The principal components change from
+pixel to pixel. How can this be when the patches are 16 by 16? It does seem to match the
+inner membrane layer. One more attempt with a downsample factor of four should recapitulate
+the S2 behavior. Are these up sampling artifacts? The liver data set makes it obvious that
+sometimes big, dark patches when present will dominate the first principal component, but if
+they're not there, then mitochondria are the first principal component and show up as red.
+
+The token per-image mean normalization doesn't have any effect.
+That's because PCA already does this.
+
 
 
 ## Task 2.2.2 -- Even more dense embeddings

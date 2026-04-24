@@ -556,9 +556,10 @@ def show_datasets(w):
         stack = np.stack(data[dname]['images'])  # (N, H, W)
         w.add_image(stack, name=dname)
 
-def task2(w, stride=16, downsample_factor=1):
-    """Run DINO on all images in both datasets, joint PCA, scrollable in napari.
-    downsample_factor: locally downscale s0 images by this factor before running DINO."""
+def task2(w, stride=16, downsample_factor=1, n_images=3):
+    """Run DINO on images, per-image mean subtraction, per-image PCA, scrollable in napari.
+    downsample_factor: locally downscale s0 images by this factor before running DINO.
+    n_images: how many images per dataset to use."""
     from skimage.transform import resize
     patch_size = 16
     model = load_dino()
@@ -567,7 +568,7 @@ def task2(w, stride=16, downsample_factor=1):
     data = load_datasets()
 
     for dname in ['liver', 'kidney']:
-        images = data[dname]['images']
+        images = data[dname]['images'][:n_images]
 
         # Downscale and crop to patch-aligned dims
         crops = []
@@ -579,51 +580,41 @@ def task2(w, stride=16, downsample_factor=1):
             H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
             crops.append(img[:H, :W])
 
-        # Use consistent H, W (all crops should be same size)
         H, W = crops[0].shape
+        pH = (H - patch_size) // stride + 1
+        pW = (W - patch_size) // stride + 1
 
-        # Run DINO on all images, collect all tokens
-        all_tokens = []
-        n_patches_per_img = []
+        # Run DINO, per-image mean subtraction, per-image PCA
+        raw_stack = []
+        pca_stack = []
         for i, x_crop in enumerate(crops):
             print(f"{dname} [{i}] inference...")
             y_full = run_dino(model, x_crop)
             tokens = y_full['x_norm_patchtokens'].squeeze(0).numpy()
-            all_tokens.append(tokens)
-            n_patches_per_img.append(tokens.shape[0])
 
-        # Joint PCA across all images — take 4 components, drop the first
-        all_tokens_cat = np.concatenate(all_tokens, axis=0)
-        pca = PCA(n_components=4)
-        all_pca = pca.fit_transform(all_tokens_cat)
-        print(f"{dname}: joint PCA variance = {pca.explained_variance_ratio_}")
-        all_pca = all_pca[:, 1:]  # drop PC1, use PC2-4 as RGB
+            # Per-image mean subtraction
+            # tokens = tokens - tokens.mean(axis=0, keepdims=True)
+            print(tokens.mean(axis=0, keepdims=True))
+            ipdb.set_trace()
+            continue
 
-        # Normalize globally
-        for i in range(3):
-            lo, hi = all_pca[:, i].min(), all_pca[:, i].max()
-            all_pca[:, i] = (all_pca[:, i] - lo) / (hi - lo + 1e-8)
+            # Per-image PCA
+            pca = PCA(n_components=3)
+            pca_features = pca.fit_transform(tokens)
+            print(f"  PCA variance: {pca.explained_variance_ratio_}")
 
-        # Split back per image and upscale to full res
-        pH = (H - patch_size) // stride + 1
-        pW = (W - patch_size) // stride + 1
-        raw_stack = []
-        pca_stack = []
-        offset = 0
-        for i, x_crop in enumerate(crops):
-            n = n_patches_per_img[i]
-            pca_features = all_pca[offset:offset + n]
-            offset += n
+            for c in range(3):
+                lo, hi = pca_features[:, c].min(), pca_features[:, c].max()
+                pca_features[:, c] = (pca_features[:, c] - lo) / (hi - lo + 1e-8)
 
             pca_grid = pca_features.reshape(pH, pW, 3)
             pca_tensor = torch.from_numpy(pca_grid).permute(2, 0, 1).unsqueeze(0)
-            pca_img = torch.nn.functional.interpolate(pca_tensor, size=(H, W), mode='bilinear', align_corners=False)
+            pca_img = torch.nn.functional.interpolate(pca_tensor, size=(H, W), mode='nearest', align_corners=None)
             pca_img = pca_img.squeeze(0).permute(1, 2, 0).numpy()
 
             raw_stack.append(x_crop)
             pca_stack.append(pca_img)
 
-        # Stack as (N, H, W) and (N, H, W, 3) for scrollable napari layers
         raw_stack = np.stack(raw_stack)
         pca_stack = np.stack(pca_stack)
 
