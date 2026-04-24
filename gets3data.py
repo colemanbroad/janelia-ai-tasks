@@ -173,6 +173,79 @@ def run_dino(model, x_np):
     print(f"Inference: {dt:.3f}s for input {x_np.shape}")
     return y
 
+def run_dino_dense(model, x_np, dense_stride=4):
+    """Dense DINO embeddings via translated passes with native stride=16.
+    Runs the model at each (dy, dx) offset in [0, dense_stride) x [0, dense_stride),
+    then stitches the non-overlapping patch grids back together.
+    Returns (pH, pW, embed_dim) numpy array at effective stride=dense_stride."""
+    patch_size = 16
+    assert patch_size % dense_stride == 0, f"dense_stride={dense_stride} must divide patch_size={patch_size}"
+
+    H, W = x_np.shape
+    # Output grid at effective stride
+    pH = (H - patch_size) // dense_stride + 1
+    pW = (W - patch_size) // dense_stride + 1
+
+    # Prepare input normalization once
+    x = x_np.astype(np.float32)
+    mu, std = x.mean(), x.std()
+    x = (x - mu) / std
+    x = x * 0.229 + 0.485
+
+    # Accumulate embeddings
+    embed_dim = None
+    accum = None
+    counts = None
+
+    n_offsets = patch_size // dense_stride
+    t0 = time.time()
+
+    for dy in range(0, patch_size, dense_stride):
+        for dx in range(0, patch_size, dense_stride):
+            # Crop with offset so native stride-16 patches land at different positions
+            x_shift = x[dy:, dx:]
+            h_s, w_s = x_shift.shape
+            h_s = (h_s // patch_size) * patch_size
+            w_s = (w_s // patch_size) * patch_size
+            if h_s < patch_size or w_s < patch_size:
+                continue
+            x_crop = x_shift[:h_s, :w_s]
+
+            x_3ch = np.stack([x_crop] * 3)
+            x_tensor = torch.from_numpy(x_3ch).unsqueeze(0)
+
+            with torch.no_grad():
+                y = model.forward_features(x_tensor)
+            tokens = y['x_norm_patchtokens'].squeeze(0).numpy()  # (n_patches, D)
+
+            if embed_dim is None:
+                embed_dim = tokens.shape[1]
+                accum = np.zeros((pH, pW, embed_dim), dtype=np.float64)
+                counts = np.zeros((pH, pW, 1), dtype=np.float64)
+
+            # Native stride=16 patch grid for this offset
+            pH_s = h_s // patch_size
+            pW_s = w_s // patch_size
+            tokens = tokens.reshape(pH_s, pW_s, embed_dim)
+
+            # Map back to the output grid
+            for pi in range(pH_s):
+                for pj in range(pW_s):
+                    # Pixel position of this patch center in original image
+                    oi = dy + pi * patch_size
+                    oj = dx + pj * patch_size
+                    # Output grid index
+                    gi = oi // dense_stride
+                    gj = oj // dense_stride
+                    if gi < pH and gj < pW:
+                        accum[gi, gj] += tokens[pi, pj]
+                        counts[gi, gj] += 1
+
+    accum /= np.maximum(counts, 1)
+    dt = time.time() - t0
+    print(f"Dense inference ({n_offsets}x{n_offsets} offsets): {dt:.1f}s for input {x_np.shape} -> ({pH},{pW},{embed_dim})")
+    return accum.astype(np.float32)
+
 def test_estimate(stride=8):
   model = load_dino()
   model.patch_embed.proj.stride = (stride, stride)

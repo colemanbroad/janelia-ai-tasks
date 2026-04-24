@@ -64,7 +64,37 @@ We could even use the small amount of ground truth segmentations to determine th
 Or we can treat the image scale as a hyperparam to be fit/trained against ground truth segmentations.
 
 In the end we just tried s0/s1/s2/s3 and eyeballed the PCA image embeddings.
-s2 appeared most effective for mouse liver data as it had the strongest visual correlation with mitos.
+s2 (4x downscaling) appeared most effective for mouse liver data as it had the strongest visual correlation with mitos.
+
+## Task 2.2.2 -- Even more dense embeddings
+
+The DINO paper refers to per-patch embeddings that tile a full image as "dense",
+but sense we're interested in detailed segmentations of small objects we need per-pixel embeddings. 
+To increase the resolution of our predictions we can
+0. take the stride-16 embeddings and upsample them with e.g. bilinear interpolation (this is what the paper does).
+1. reduce the model's patch-embedding stride to create overlapping embeddings and then average the results.
+2. equivalently, we can apply `avg(Tinv(model(T(x))))` for whole-image translations `T`.
+3. we can extend `T` to be any kind of information-preserving transformation over which our embeddings should be invariant.
+4. we can train a super-resolution model to intelligently enhance the results.
+
+---
+
+It's probably fair game to ask how these DINO embeddings compare with classical hand-coded feature extractors, e.g. SIFT.
+At stride=8 it's hard to notice any visual patterns for the mitos, but at stride=4 they emerge and at stride=2 you can count them.
+The LBP features reveal some global patterns but don't really pick up on mitos.
+
+---
+
+Let's try this approach with the s0 and s1 resolution data.
+The s1 res data with stride=4 DINO still allows you to see/count mitos, but the color signal is
+significantly weaker. The red mitos don't stand out as well against the blue background.
+
+For completeness we'll try the s0 image...
+
+The stride=16 version is waaaay too noisy. Very little RGB correlation with mito.
+The stride=8 version is still way too noisy. R correlates with dark pixels, G with edges. B is everywhere.
+
+Exploring hyperopt for LBP (f9) shows r4p32 to have the most interesting correlation with mitos.
 
 ---
 
@@ -98,38 +128,12 @@ I keep noticing large artifacts with very high spatial frequency.
 I wonder if there's a problem with our implementation of high density (small stride) inference?
 Let's try running the same prediction machinery but with the `Tinv(f(T(x)))` approach for translations T.
 This requires reimpl of the inference step and reworking how images are aggregated and averaged after the forward pass.
+This should be written as a new codepath for a new forward pass + aggregation that runs the same image through multiple times.
 
 Let's first just run with stride 16 and see how different neighboring patches are.
+Actually, the 'nearest' method of interp still may still have a high frequency artifacts? 
+I guess it's not just a trick of bilinear interp.
 
-## Task 2.2.2 -- Even more dense embeddings
-
-The DINO paper refers to per-patch embeddings that tile a full image as "dense",
-but sense we're interested in detailed segmentations of small objects we need per-pixel embeddings. 
-To increase the resolution of our predictions we can
-0. take the stride-16 embeddings and upsample them with e.g. bilinear interpolation (this is what the paper does).
-1. reduce the model's patch-embedding stride to create overlapping embeddings and then average the results.
-2. equivalently, we can apply `avg(Tinv(model(T(x))))` for whole-image translations `T`.
-3. we can extend `T` to be any kind of information-preserving transformation over which our embeddings should be invariant.
-4. we can train a super-resolution model to intelligently enhance the results.
-
----
-
-It's probably fair game to ask how these DINO embeddings compare with classical hand-coded feature extractors, e.g. SIFT.
-At stride=8 it's hard to notice any visual patterns for the mitos, but at stride=4 they emerge and at stride=2 you can count them.
-The LBP features reveal some global patterns but don't really pick up on mitos.
-
----
-
-Let's try this approach with the s0 and s1 resolution data.
-The s1 res data with stride=4 DINO still allows you to see/count mitos, but the color signal is
-significantly weaker. The red mitos don't stand out as well against the blue background.
-
-For completeness we'll try the s0 image...
-
-The stride=16 version is waaaay too noisy. Very little RGB correlation with mito.
-The stride=8 version is still way too noisy. R correlates with dark pixels, G with edges. B is everywhere.
-
-Exploring hyperopt for LBP (f9) shows r4p32 to have the most interesting correlation with mitos.
 
 ## Task 2.3.1 -- Embedding-Based Retrieval & Visualization
 
