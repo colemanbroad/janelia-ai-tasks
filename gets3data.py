@@ -556,7 +556,7 @@ def show_datasets(w):
         stack = np.stack(data[dname]['images'])  # (N, H, W)
         w.add_image(stack, name=dname)
 
-def task2(w, stride=16, downsample_factor=1, n_images=3):
+def task2(w, stride=16, downsample_factor=1, n_images=3, mode='nearest'):
     """Run DINO on images, per-image mean subtraction, per-image PCA, scrollable in napari.
     downsample_factor: locally downscale s0 images by this factor before running DINO.
     n_images: how many images per dataset to use."""
@@ -584,32 +584,42 @@ def task2(w, stride=16, downsample_factor=1, n_images=3):
         pH = (H - patch_size) // stride + 1
         pW = (W - patch_size) // stride + 1
 
-        # Run DINO, per-image mean subtraction, per-image PCA
-        raw_stack = []
-        pca_stack = []
+        # Run DINO on all images, collect tokens
+        all_tokens = []
+        n_patches_per_img = []
         for i, x_crop in enumerate(crops):
             print(f"{dname} [{i}] inference...")
             y_full = run_dino(model, x_crop)
             tokens = y_full['x_norm_patchtokens'].squeeze(0).numpy()
+            all_tokens.append(tokens)
+            n_patches_per_img.append(tokens.shape[0])
 
-            # Per-image mean subtraction
-            # tokens = tokens - tokens.mean(axis=0, keepdims=True)
-            print(tokens.mean(axis=0, keepdims=True))
-            ipdb.set_trace()
-            continue
+        # Per-image mean subtraction, then joint PCA
+        for i in range(len(all_tokens)):
+            all_tokens[i] = all_tokens[i] - all_tokens[i].mean(axis=0, keepdims=True)
 
-            # Per-image PCA
-            pca = PCA(n_components=3)
-            pca_features = pca.fit_transform(tokens)
-            print(f"  PCA variance: {pca.explained_variance_ratio_}")
+        all_tokens_cat = np.concatenate(all_tokens, axis=0)
+        pca = PCA(n_components=3)
+        all_pca = pca.fit_transform(all_tokens_cat)
+        print(f"{dname}: joint PCA variance = {pca.explained_variance_ratio_}")
 
-            for c in range(3):
-                lo, hi = pca_features[:, c].min(), pca_features[:, c].max()
-                pca_features[:, c] = (pca_features[:, c] - lo) / (hi - lo + 1e-8)
+        # Normalize globally -- RGB in [0,1]
+        for c in range(3):
+            lo, hi = all_pca[:, c].min(), all_pca[:, c].max()
+            all_pca[:, c] = (all_pca[:, c] - lo) / (hi - lo + 1e-8)
+
+        # Split back per image and upscale
+        raw_stack = []
+        pca_stack = []
+        offset = 0
+        for i, x_crop in enumerate(crops):
+            n = n_patches_per_img[i]
+            pca_features = all_pca[offset:offset + n]
+            offset += n
 
             pca_grid = pca_features.reshape(pH, pW, 3)
             pca_tensor = torch.from_numpy(pca_grid).permute(2, 0, 1).unsqueeze(0)
-            pca_img = torch.nn.functional.interpolate(pca_tensor, size=(H, W), mode='nearest', align_corners=None)
+            pca_img = torch.nn.functional.interpolate(pca_tensor, size=(H, W), mode=mode, align_corners=dict(bilinear=False, nearest=None)[mode])
             pca_img = pca_img.squeeze(0).permute(1, 2, 0).numpy()
 
             raw_stack.append(x_crop)

@@ -85,8 +85,21 @@ they're not there, then mitochondria are the first principal component and show 
 
 The token per-image mean normalization doesn't have any effect.
 That's because PCA already does this.
+And we're running PCA _inside_ the loop.
+Let's try running it outside the loop after token prediction.
 
+But still the RGB display suffers from
+1. only showing 3 feature dims
+2. large impact of per-image vs per-dataset pca
 
+---
+
+I keep noticing large artifacts with very high spatial frequency.
+I wonder if there's a problem with our implementation of high density (small stride) inference?
+Let's try running the same prediction machinery but with the `Tinv(f(T(x)))` approach for translations T.
+This requires reimpl of the inference step and reworking how images are aggregated and averaged after the forward pass.
+
+Let's first just run with stride 16 and see how different neighboring patches are.
 
 ## Task 2.2.2 -- Even more dense embeddings
 
@@ -159,3 +172,7 @@ However, I expect this NOT to be the case here, because EM data is fundamentally
 from the natural images on which DINO was trained.
 TODO: try using a model trained on satellite imagery. It may be a better domain match.
 We could also do linear-probing using a small amount of the existing ground truth. 
+
+# Todo
+
+-[ ] fix requirements.txt
