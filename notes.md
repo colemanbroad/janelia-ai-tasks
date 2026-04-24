@@ -143,13 +143,6 @@ It looks like we can somewhat compensate for the underlying ROPE embeddings by p
 a const grey image forward through the model and subtracting the results. This is obviously
 wrong, because the ViT is not additive, but it appears to help somewhat.
 
-
-
-Now let's
-1. try with higher-res imagery (looks the same but high res. This is what we expect).
-2. larger model
-
-
 ## Task 2.3.1 -- Embedding-Based Retrieval & Visualization
 
 Pick out a test mito and use it as a query to evaluate quality of embeddings wrt mitos specifically.
@@ -177,6 +170,9 @@ Ok, let's see how well this query point works on a different dataset...
 There is a mito centerpoint at (165,250) in the mouse kidney.
 These mitos are very dark, and a simple blur+threshold could be enough to segment them.
 
+--- ---
+
+After fixing dense predictions...
 
 
 ##  Task 2.4.1 -- Improving on DINO

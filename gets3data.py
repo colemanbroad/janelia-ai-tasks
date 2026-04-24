@@ -721,77 +721,125 @@ def task2(w, stride=16, downsample_factor=1, n_images=3, mode='nearest', dense=F
         w.add_image(raw_stack, name=f'{label} raw')
         w.add_image(pca_stack, name=f'{label} PCA', rgb=True)
 
-def task3(w, stride=2):
-    from skimage.feature import peak_local_max
+
+        
+def mitolocations():
+    """Lists hold mito centerpoints for the first few images in each dataset. One point per image."""
+    kidney = [
+        (347,550),
+        (430,400), # (388,139),
+        (470,140),
+        (128,68),
+        (971,930),
+        (220,852),
+        (353,233),
+    ]
+    liver = [
+        (619,415),
+        (126,149),
+        (873,159),
+        (704,992),
+    ]
+    return {'kidney':kidney, 'liver':liver}
+
+
+def run_everything():
+    w = napari.viewer.Viewer()
+
+    ## Task 1: Download 20 random 1024x1024 s0 crops from liver and kidney volumes.
+    task1()
+
+    ## Task 2: Dense DINO embeddings + joint PCA visualized as RGB across multiple images.
+    task2(w, stride=2, downsample_factor=2, n_images=4, dense=True, subtract_pos=False)
+
+    ## Task 3: Mito retrieval — average cosine similarity from 7 kidney query points across 7 kidney targets.
+    task3(w, query_ds='kidney', target_ds='kidney', query_idxs=[0,1,2,3,4,5,6], n_targets=7, downsample_factor=2, dense_stride=2)
+
+
+
+
+def task3(w, query_ds='kidney', target_ds='kidney', query_idxs=None, n_targets=3,
+         dense_stride=8, downsample_factor=1):
+    """Embedding-based retrieval: average query from multiple mito points, predict on target images.
+    query_ds/target_ds: 'liver' or 'kidney'.
+    query_idxs: which mito points to use as queries (indices into mitolocations). None = all.
+    n_targets: how many target images to predict on.
+    Results are collected into scrollable stacks."""
+    from skimage.transform import resize
     patch_size = 16
 
     model = load_dino()
-    model.patch_embed.proj.stride = (stride, stride)
+    data = load_datasets()
+    mitos = mitolocations()
 
-    # Load liver and kidney images
-    # c,b,a = 12057, 12301, 6229
-    c,b,a = 3754, 2619, 3515
-    img_liver = loadZarr('jrc_mus-liver', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
-    c,b,a = 6417, 4150, 10157
-    img_kidney = loadZarr('jrc_mus-kidney', 'recon-1/em/fibsem-uint8/s2', p2patch(a,b,c, s=2, const=0))
+    # --- Build averaged query embedding ---
+    query_points = mitos[query_ds]
+    if query_idxs is not None:
+        query_points = [query_points[i] for i in query_idxs] ## could this be a list comp?
+    else:
+        query_idxs = list(range(len(query_points))) ## Q: why do this?
 
-    # Mito query points (y, x) in each image
-    liver_mito = (44, 163)
-    kidney_mito = (165, 250)
-
-    datasets = {
-        'liver':  (img_liver,  liver_mito),
-        'kidney': (img_kidney, kidney_mito),
-    }
-
-    # Get stride=2 embeddings for each image: (pH, pW, 384)
-    embeddings = {}
-    crops = {}
-    for name, (img, _) in datasets.items():
+    # --- Collect query embeddings (normalized, not averaged yet) ---
+    query_embs = []  # list of (1, D) normalized tensors
+    for i, mito_yx in zip(query_idxs, query_points):
+        img = data[query_ds]['images'][i].astype(np.float32)
+        if downsample_factor > 1:
+            new_h, new_w = img.shape[0] // downsample_factor, img.shape[1] // downsample_factor
+            img = resize(img, (new_h, new_w), anti_aliasing=True, preserve_range=True).astype(np.float32)
         H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
-        x_crop = img[:H, :W].astype(np.float32)
-        y_full = run_dino(model, x_crop)
-        tokens = y_full['x_norm_patchtokens'].squeeze(0)  # (N, 384)
-        pH = (H - patch_size) // stride + 1
-        pW = (W - patch_size) // stride + 1
-        embeddings[name] = (tokens, pH, pW, H, W)
-        crops[name] = x_crop
+        x_crop = img[:H, :W]
 
-    # Get query embedding at mito centerpoint for each dataset
-    queries = {}
-    for name, (img, mito_yx) in datasets.items():
-        tokens, pH, pW, H, W = embeddings[name]
-        qy, qx = mito_yx
-        qi = min(qy // stride, pH - 1)
-        qj = min(qx // stride, pW - 1)
-        queries[name] = torch.nn.functional.normalize(tokens[qi * pW + qj].unsqueeze(0), dim=-1)
+        print(f"Query {query_ds}[{i}]: computing embeddings...")
+        token_grid = run_dino_dense(model, x_crop, dense_stride=dense_stride)
+        qy, qx = mito_yx[0] // downsample_factor, mito_yx[1] // downsample_factor
+        pH, pW = token_grid.shape[:2]
+        qi = min(qy // dense_stride, pH - 1)
+        qj = min(qx // dense_stride, pW - 1)
+        qvec = torch.from_numpy(token_grid[qi, qj]).unsqueeze(0)
+        query_embs.append(torch.nn.functional.normalize(qvec, dim=-1))
 
-    # Add raw images
-    # w.add_image(crops['liver'], name='liver original')
-    # w.add_image(crops['kidney'], name='kidney original')
+    print(f"Using {len(query_embs)} query points from {query_ds}")
 
-    # Compute all 4 combinations: query from {liver,kidney} x target {liver,kidney}
-    for q_name in ['liver', 'kidney']:
-        query_emb = queries[q_name]
-        q_mito = datasets[q_name][1]
-        w.add_points(np.array([list(q_mito)]), name=f'{q_name} query', size=10, face_color='red')
+    # --- Compute per-query similarity on each target, then average the similarity maps ---
+    target_images = data[target_ds]['images'][:n_targets]
+    raw_stack = []
+    sim_stack = []
 
-        for t_name in ['liver', 'kidney']:
-            tokens, pH, pW, H, W = embeddings[t_name]
-            patch_normed = torch.nn.functional.normalize(tokens, dim=-1)
-            cos_sim = (patch_normed @ query_emb.T).squeeze(-1).numpy()
+    for i, img in enumerate(target_images):
+        img = img.astype(np.float32)
+        if downsample_factor > 1:
+            new_h, new_w = img.shape[0] // downsample_factor, img.shape[1] // downsample_factor
+            img = resize(img, (new_h, new_w), anti_aliasing=True, preserve_range=True).astype(np.float32)
+        H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
+        x_crop = img[:H, :W]
 
-            sim_grid = cos_sim.reshape(pH, pW, 1)
-            sim_img = overlap_average(sim_grid, H, W, patch_size, stride).squeeze(-1)
+        print(f"Target {target_ds}[{i}]: computing embeddings...")
+        token_grid = run_dino_dense(model, x_crop, dense_stride=dense_stride)
+        pH, pW, D = token_grid.shape
 
-            peaks = peak_local_max(sim_img, min_distance=10, threshold_rel=0.3)
-            label = f'query={q_name} target={t_name}'
-            print(f"{label}: {len(peaks)} detections")
+        tokens_flat = torch.from_numpy(token_grid.reshape(-1, D))
+        tokens_normed = torch.nn.functional.normalize(tokens_flat, dim=-1)
 
+        # Compute cosine similarity for each query, then average
+        sim_accum = np.zeros(tokens_normed.shape[0], dtype=np.float64)
+        for qemb in query_embs:
+            sim_accum += (tokens_normed @ qemb.T).squeeze(-1).numpy()
+        sim_accum /= len(query_embs)
 
-            # w.add_image(crops[t_name], name=t_name + ' original')
-            # w.add_image(sim_img, name=f'{label} sim', colormap='inferno')
-            w.add_points(peaks, name=f'{label} detections', size=8, face_color='green')
+        sim_grid = sim_accum.reshape(pH, pW)
+        sim_tensor = torch.from_numpy(sim_grid).float().unsqueeze(0).unsqueeze(0)
+        sim_img = torch.nn.functional.interpolate(sim_tensor, size=(H, W), mode='bilinear', align_corners=False)
+        sim_img = sim_img.squeeze().numpy()
+
+        raw_stack.append(x_crop)
+        sim_stack.append(sim_img)
+
+    raw_stack = np.stack(raw_stack)
+    sim_stack = np.stack(sim_stack)
+
+    label = f'q={query_ds}[{query_idxs}] t={target_ds}'
+    w.add_image(raw_stack, name=f'{label} raw')
+    w.add_image(sim_stack, name=f'{label} sim', colormap='inferno')
 
 def mito_retrieval(w, img, query_yx, stride=2, min_distance=10, threshold_rel=0.3, name=''):
     """Cosine similarity retrieval from a query mito point.
