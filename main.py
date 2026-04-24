@@ -10,6 +10,41 @@ from sklearn.decomposition import PCA
 CACHE_DIR = 'cache'
 os.makedirs(CACHE_DIR, exist_ok=True)
 
+dataset_names = [
+    'jrc_hela-3',
+    'jrc_fly-larva-1',
+    'jrc_jurkat-1',
+    'jrc_hela-2',
+    'jrc_macrophage-2',
+    'jrc_mus-liver',
+    'jrc_hela-1',
+    'jrc_ccl81-covid-1',
+    'jrc_choroid-plexus-2',
+    'jrc_cos7-11',
+    'jrc_ctl-id8-1',
+    'jrc_ctl-id8-2',
+    'jrc_ctl-id8-3',
+    'jrc_ctl-id8-4',
+    'jrc_ctl-id8-5',
+    'jrc_dauer-larva',
+    'jrc_fly-acc-calyx-1',
+    'jrc_fly-fsb-1',
+    'jrc_fly-mb-z0419-20',
+    'jrc_hela-21',
+    'jrc_hela-22',
+    'jrc_hela-4',
+    'jrc_hela-bfa',
+    'jrc_hela-h89-1',
+    'jrc_hela-h89-2',
+    'jrc_mus-kidney',
+    'jrc_mus-pancreas-1',
+    'jrc_mus-pancreas-2',
+    'jrc_mus-pancreas-3',
+    'jrc_mus-sc-zp104a',
+    'jrc_mus-sc-zp105a',
+    'jrc_sum159-1',
+]
+
 def _slice_to_str(s):
     """Convert a slice/index tuple to a string for cache filenames."""
     if not isinstance(s, tuple):
@@ -473,6 +508,7 @@ def task3(w, query_ds='kidney', target_ds='kidney', query_idxs=None, n_targets=3
         sim_accum /= len(query_embs)
 
         sim_grid = sim_accum.reshape(pH, pW)
+        H, W = x_crop.shape
         sim_tensor = torch.from_numpy(sim_grid).float().unsqueeze(0).unsqueeze(0)
         sim_img = torch.nn.functional.interpolate(sim_tensor, size=(H, W), mode='bilinear', align_corners=False)
         sim_img = sim_img.squeeze().numpy()
@@ -487,5 +523,5 @@ def task3(w, query_ds='kidney', target_ds='kidney', query_idxs=None, n_targets=3
     w.add_image(raw_stack, name=f'{label} raw')
     w.add_image(sim_stack, name=f'{label} sim', colormap='inferno')
 
-
-
+if __name__ == '__main__':
+    run_everything()

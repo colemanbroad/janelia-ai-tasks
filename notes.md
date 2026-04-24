@@ -190,5 +190,5 @@ We could also do linear-probing using a small amount of the existing ground trut
 
 # Todo
 
--[ ] fix requirements.txt
+-[x] fix requirements.txt
 -[ ] make sure docstrings are consistent with code
