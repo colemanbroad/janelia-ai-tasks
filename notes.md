@@ -56,6 +56,10 @@ A: Some datasets DO have GT, but this is out of scope. Let's just eyeball it.
 
 ## Task 2.2.1 -- Patch Size Selection
 
+Explore data here:
+- https://openorganelle.janelia.org/datasets/
+- https://open.quiltdata.com/b/janelia-cosem-datasets
+
 The pretrained models require patches of size 16x16.
 Since mitos are typically 20px across at their most narrow in the s2 data this embedding doesn't
 capture their full structure. So it's unlikely to capture mito geometry, but will get texture.

@@ -415,8 +415,9 @@ def task2(w, stride=16, downsample_factor=1, n_images=3, mode='nearest', dense=F
         pca_stack = np.stack(pca_stack)
 
         label = f'{dname} {"dense" if dense else "stride"}{stride} {downsample_factor}x'
-        w.add_image(raw_stack, name=f'{label} raw')
-        w.add_image(pca_stack, name=f'{label} PCA', rgb=True)
+        if w is not None:
+            w.add_image(raw_stack, name=f'{label} raw')
+            w.add_image(pca_stack, name=f'{label} PCA', rgb=True)
 
         
 def mitolocations():
@@ -439,8 +440,13 @@ def mitolocations():
     return {'kidney':kidney, 'liver':liver}
 
 
-def run_everything():
-    w = napari.viewer.Viewer()
+def run_everything(use_napari=True):
+    try:
+        import napari
+        w = napari.viewer.Viewer() if use_napari else None
+    except ImportError:
+        print("napari not installed, running without viewer")
+        w = None
 
     ## Task 1: Download 20 random 1024x1024 s0 crops from liver and kidney volumes.
     task1()
@@ -450,6 +456,9 @@ def run_everything():
 
     ## Task 3: Mito retrieval — average cosine similarity from 7 kidney query points across 7 kidney targets.
     task3(w, query_ds='kidney', target_ds='kidney', query_idxs=[0,1,2,3,4,5,6], n_targets=7, downsample_factor=2, dense_stride=2)
+
+    ## Task 3 figures: save tiled grids for all query/target combinations.
+    task3_all(dense_stride=2, downsample_factor=2)
 
 
 def task3(w, query_ds='kidney', target_ds='kidney', query_idxs=None, n_targets=3,
