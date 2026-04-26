@@ -150,10 +150,36 @@ def loadN5(ds, subpath, slc, **kwargs):
 def loadZarr(ds, subpath, slc, **kwargs):
     return load_remote(ds, subpath, slc, fmt='zarr', **kwargs)
 
-def load_dino():
+DINO_MODELS = {
+    'vits16': {
+        'hub_name': 'dinov3_vits16',
+        'weights': 'dinoweights/dinov3_vits16_pretrain_lvd1689m-08c60483.pth',
+    },
+    'vitl16': {
+        'hub_name': 'dinov3_vitl16',
+        'weights': 'dinoweights/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth',
+    },
+}
+
+def detect_gpu():
+    """Return GPU name and memory in GB, or None if no GPU."""
+    if not torch.cuda.is_available():
+        return None, 0
+    name = torch.cuda.get_device_name(0)
+    mem_gb = torch.cuda.get_device_properties(0).total_mem / 1e9
+    return name, mem_gb
+
+def load_dino(model_name=None):
+    if model_name is None:
+        model_name = os.environ.get('DINO_MODEL', 'vits16')
     dinodir = "./../dinov3/"
-    model = torch.hub.load(dinodir, 'dinov3_vits16', source='local', weights='dinoweights/dinov3_vits16_pretrain_lvd1689m-08c60483.pth')
+    info = DINO_MODELS[model_name]
+    model = torch.hub.load(dinodir, info['hub_name'], source='local', weights=info['weights'])
     model.eval()
+    gpu_name, gpu_mem = detect_gpu()
+    if gpu_name:
+        print(f"GPU: {gpu_name} ({gpu_mem:.0f} GB)")
+        model = model.cuda()
     return model
 
 def run_dino(model, x_np):
@@ -166,7 +192,8 @@ def run_dino(model, x_np):
     x = x_np.astype(np.float32)
 
     x_3ch = np.stack([x] * 3)  # (3, H, W)
-    x_tensor = torch.from_numpy(x_3ch).unsqueeze(0)  # (1, 3, H, W)
+    device = next(model.parameters()).device
+    x_tensor = torch.from_numpy(x_3ch).unsqueeze(0).to(device)  # (1, 3, H, W)
 
     t0 = time.time()
     with torch.no_grad():
@@ -196,11 +223,12 @@ def _run_dense_passes(model, x_2d, dense_stride, patch_size=16):
             x_crop = x_shift[:h_s, :w_s]
 
             x_3ch = np.stack([x_crop] * 3)
-            x_tensor = torch.from_numpy(x_3ch).unsqueeze(0)
+            device = next(model.parameters()).device
+            x_tensor = torch.from_numpy(x_3ch).unsqueeze(0).to(device)
 
             with torch.no_grad():
                 y = model.forward_features(x_tensor)
-            tokens = y['x_norm_patchtokens'].squeeze(0).numpy()
+            tokens = y['x_norm_patchtokens'].squeeze(0).cpu().numpy()
 
             if embed_dim is None:
                 embed_dim = tokens.shape[1]
@@ -442,13 +470,16 @@ def mitolocations():
     return {'kidney':kidney, 'liver':liver}
 
 
-def run_everything(use_napari=True):
-    try:
-        import napari
-        w = napari.viewer.Viewer() if use_napari else None
-    except ImportError:
-        print("napari not installed, running without viewer")
+def run_everything(headless=False):
+    if headless:
         w = None
+    else:
+        try:
+            import napari
+            w = napari.viewer.Viewer()
+        except ImportError:
+            print("napari not installed, running without viewer")
+            w = None
 
     ## Task 1: Download 20 random 1024x1024 s0 crops from liver and kidney volumes.
     task1()
@@ -615,4 +646,23 @@ def task3_all(dense_stride=8, downsample_factor=2, out_dir='figures'):
         print(f"  Saved {gif_path}")
 
 if __name__ == '__main__':
-    run_everything()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--headless', action='store_true', help='Run without napari, use larger model if big GPU available')
+    args = parser.parse_args()
+
+    # Auto-detect: if big GPU available, default to headless with large model
+    gpu_name, gpu_mem = detect_gpu()
+    if gpu_name and gpu_mem >= 40:
+        print(f"Detected large GPU: {gpu_name} ({gpu_mem:.0f} GB) — defaulting to headless + vitl16")
+        args.headless = True
+
+    if args.headless:
+        # Use larger model if weights exist
+        if os.path.exists(DINO_MODELS['vitl16']['weights']):
+            os.environ['DINO_MODEL'] = 'vitl16'
+            print("Using vitl16 model")
+        else:
+            print(f"vitl16 weights not found at {DINO_MODELS['vitl16']['weights']}, falling back to vits16")
+
+    run_everything(headless=args.headless)
