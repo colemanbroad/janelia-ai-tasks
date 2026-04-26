@@ -1,6 +1,8 @@
 import os
 import zarr
 import time
+import matplotlib
+matplotlib.use('Agg')  # headless-safe backend, must be before pyplot import
 import dask.array as da # we import dask to help us manage parallel access to the big dataset
 import numpy as np
 import torch
