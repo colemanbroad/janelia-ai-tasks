@@ -166,7 +166,7 @@ def detect_gpu():
     if not torch.cuda.is_available():
         return None, 0
     name = torch.cuda.get_device_name(0)
-    mem_gb = torch.cuda.get_device_properties(0).total_mem / 1e9
+    mem_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
     return name, mem_gb
 
 def load_dino(model_name=None):
