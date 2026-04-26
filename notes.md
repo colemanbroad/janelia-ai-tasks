@@ -196,3 +196,10 @@ We could also do linear-probing using a small amount of the existing ground trut
 
 -[x] fix requirements.txt
 -[ ] make sure docstrings are consistent with code
+
+# jarvis remote
+
+setup helix
+git clone this repo
+git clone dinov3 repo
+download weights
