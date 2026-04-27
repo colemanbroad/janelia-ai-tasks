@@ -1,4 +1,5 @@
 [general]
 headless = true
-# model = "vitl16"
+stride=1
+subtract_pos = false
 tasks = [5]

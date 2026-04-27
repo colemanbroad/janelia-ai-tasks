@@ -151,14 +151,41 @@ def loadZarr(ds, subpath, slc, **kwargs):
     return load_remote(ds, subpath, slc, fmt='zarr', **kwargs)
 
 DINO_MODELS = {
+    # ViT LVD-1689M
     'vits16': {
         'hub_name': 'dinov3_vits16',
         'weights': 'dinoweights/dinov3_vits16_pretrain_lvd1689m-08c60483.pth',
     },
+    'vits16plus': {
+        'hub_name': 'dinov3_vits16plus',
+        'weights': 'dinoweights/dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth',
+    },
+    'vitb16': {
+        'hub_name': 'dinov3_vitb16',
+        'weights': 'dinoweights/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth',
+    },
+    'vitl16_lvd': {
+        'hub_name': 'dinov3_vitl16',
+        'weights': 'dinoweights/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth',
+    },
+    'vith16plus': {
+        'hub_name': 'dinov3_vith16plus',
+        'weights': 'dinoweights/dinov3_vith16plus_pretrain_lvd1689m-7c1da9a5.pth',
+    },
+    'vit7b16': {
+        'hub_name': 'dinov3_vit7b16',
+        'weights': 'dinoweights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth',
+    },
+    # ViT SAT-493M
     'vitl16': {
         'hub_name': 'dinov3_vitl16',
         'weights': 'dinoweights/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth',
     },
+    'vit7b16_sat': {
+        'hub_name': 'dinov3_vit7b16',
+        'weights': 'dinoweights/dinov3_vit7b16_pretrain_sat493m-a6675841.pth',
+    },
+    # ConvNeXt LVD-1689M
     'convnext_tiny': {
         'hub_name': 'dinov3_convnext_tiny',
         'weights': 'dinoweights/dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth',

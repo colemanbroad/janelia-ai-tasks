@@ -199,8 +199,11 @@ We could also do linear-probing using a small amount of the existing ground trut
 
 # jarvis remote
 
-
-setup helix
 git clone this repo
 git clone dinov3 repo
 download weights
+setup helix
+
+---
+
+I keep wanting to change what's run without editing a file. The config system is only OK.
