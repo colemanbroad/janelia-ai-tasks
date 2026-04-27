@@ -1,5 +1,20 @@
 [general]
-downsample_factor = 4
+downsample_factor = 2
+model = "convnext_tiny"
+stride = 4
+
+[tasks]
+run_task1 = false
+run_task2 = true
+run_task3 = false
+run_task3_all = false
+
+[task2]
+n_images = 4
+dense = true
 
 [task3]
-n_targets = 4
+query_ds = "kidney"
+target_ds = "kidney"
+n_targets = 7
+

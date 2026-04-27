@@ -159,6 +159,22 @@ DINO_MODELS = {
         'hub_name': 'dinov3_vitl16',
         'weights': 'dinoweights/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth',
     },
+    'convnext_tiny': {
+        'hub_name': 'dinov3_convnext_tiny',
+        'weights': 'dinoweights/dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth',
+    },
+    'convnext_small': {
+        'hub_name': 'dinov3_convnext_small',
+        'weights': 'dinoweights/dinov3_convnext_small_pretrain_lvd1689m-296db49d.pth',
+    },
+    'convnext_base': {
+        'hub_name': 'dinov3_convnext_base',
+        'weights': 'dinoweights/dinov3_convnext_base_pretrain_lvd1689m-801f2ba9.pth',
+    },
+    'convnext_large': {
+        'hub_name': 'dinov3_convnext_large',
+        'weights': 'dinoweights/dinov3_convnext_large_pretrain_lvd1689m-61fa432d.pth',
+    },
 }
 
 def detect_gpu():
@@ -202,23 +218,35 @@ def run_dino(model, x_np):
     print(f"Inference: {dt:.3f}s for input {x_np.shape}")
     return y
 
-def _run_dense_passes(model, x_2d, dense_stride, patch_size=16):
+def _detect_model_stride(model):
+    """Detect the model's effective spatial stride by running a test input."""
+    device = next(model.parameters()).device
+    test_size = 128
+    x_test = torch.zeros(1, 3, test_size, test_size, device=device)
+    with torch.no_grad():
+        y = model.forward_features(x_test)
+    n_tokens = y['x_norm_patchtokens'].shape[1]
+    grid_side = int(np.sqrt(n_tokens))
+    model_stride = test_size // grid_side
+    return model_stride
+
+def _run_dense_passes(model, x_2d, dense_stride, model_stride):
     """Run translated passes on a pre-normalized 2D array. Returns (pH, pW, D) accumulator."""
     H, W = x_2d.shape
-    pH = (H - patch_size) // dense_stride + 1
-    pW = (W - patch_size) // dense_stride + 1
+    pH = (H - model_stride) // dense_stride + 1
+    pW = (W - model_stride) // dense_stride + 1
 
     embed_dim = None
     accum = None
     counts = None
 
-    for dy in range(0, patch_size, dense_stride):
-        for dx in range(0, patch_size, dense_stride):
+    for dy in range(0, model_stride, dense_stride):
+        for dx in range(0, model_stride, dense_stride):
             x_shift = x_2d[dy:, dx:]
             h_s, w_s = x_shift.shape
-            h_s = (h_s // patch_size) * patch_size
-            w_s = (w_s // patch_size) * patch_size
-            if h_s < patch_size or w_s < patch_size:
+            h_s = (h_s // model_stride) * model_stride
+            w_s = (w_s // model_stride) * model_stride
+            if h_s < model_stride or w_s < model_stride:
                 continue
             x_crop = x_shift[:h_s, :w_s]
 
@@ -235,14 +263,14 @@ def _run_dense_passes(model, x_2d, dense_stride, patch_size=16):
                 accum = np.zeros((pH, pW, embed_dim), dtype=np.float64)
                 counts = np.zeros((pH, pW, 1), dtype=np.float64)
 
-            pH_s = h_s // patch_size
-            pW_s = w_s // patch_size
+            pH_s = h_s // model_stride
+            pW_s = w_s // model_stride
             tokens = tokens.reshape(pH_s, pW_s, embed_dim)
 
             for pi in range(pH_s):
                 for pj in range(pW_s):
-                    oi = dy + pi * patch_size
-                    oj = dx + pj * patch_size
+                    oi = dy + pi * model_stride
+                    oj = dx + pj * model_stride
                     gi = oi // dense_stride
                     gj = oj // dense_stride
                     if gi < pH and gj < pW:
@@ -253,11 +281,11 @@ def _run_dense_passes(model, x_2d, dense_stride, patch_size=16):
     return accum.astype(np.float32)
 
 def run_dino_dense(model, x_np, dense_stride=4, subtract_pos=True):
-    """Dense DINO embeddings via translated passes with native stride=16.
+    """Dense DINO embeddings via translated passes at the model's native stride.
     If subtract_pos, subtracts a positional baseline computed from a constant image.
     Returns (pH, pW, embed_dim) numpy array at effective stride=dense_stride."""
-    patch_size = 16
-    assert patch_size % dense_stride == 0, f"dense_stride={dense_stride} must divide patch_size={patch_size}"
+    model_stride = _detect_model_stride(model)
+    assert model_stride % dense_stride == 0, f"dense_stride={dense_stride} must divide model_stride={model_stride}"
 
     H, W = x_np.shape
 
@@ -267,15 +295,14 @@ def run_dino_dense(model, x_np, dense_stride=4, subtract_pos=True):
     x = (x - mu) / std
     x = x * 0.229 + 0.485
 
-    n_offsets = patch_size // dense_stride
+    n_offsets = model_stride // dense_stride
     t0 = time.time()
 
-    accum = _run_dense_passes(model, x, dense_stride, patch_size)
+    accum = _run_dense_passes(model, x, dense_stride, model_stride)
 
     if subtract_pos:
-        # Run same passes on a constant image to get positional baseline
         x_const = np.full_like(x, 0.485)  # ImageNet mean
-        baseline = _run_dense_passes(model, x_const, dense_stride, patch_size)
+        baseline = _run_dense_passes(model, x_const, dense_stride, model_stride)
         accum = accum - baseline
         print(f"  Subtracted positional baseline")
 
@@ -284,6 +311,43 @@ def run_dino_dense(model, x_np, dense_stride=4, subtract_pos=True):
     print(f"Dense inference ({n_offsets}x{n_offsets} offsets): {dt:.1f}s for input {x_np.shape} -> {accum.shape}")
     return accum
 
+
+def run_convnext_dense(model, x_np):
+    """Single-pass dense embeddings for ConvNeXt models.
+    Returns (pH, pW, embed_dim) numpy array."""
+    model_stride = _detect_model_stride(model)
+    H, W = x_np.shape
+
+    x = x_np.astype(np.float32)
+    mu, std = x.mean(), x.std() + 1e-8
+    x = (x - mu) / std
+    x = x * 0.229 + 0.485
+
+    # Crop to model stride
+    H = (H // model_stride) * model_stride
+    W = (W // model_stride) * model_stride
+    x = x[:H, :W]
+
+    x_3ch = np.stack([x] * 3)
+    device = next(model.parameters()).device
+    x_tensor = torch.from_numpy(x_3ch).unsqueeze(0).to(device)
+
+    t0 = time.time()
+    with torch.no_grad():
+        y = model.forward_features(x_tensor)
+    tokens = y['x_norm_patchtokens'].squeeze(0).cpu().numpy()
+
+    pH = H // model_stride
+    pW = W // model_stride
+    token_grid = tokens.reshape(pH, pW, -1)
+
+    dt = time.time() - t0
+    print(f"ConvNeXt inference: {dt:.1f}s for input ({H},{W}) -> {token_grid.shape}")
+    return token_grid
+
+def get_embeddings(model, x_np, dense_stride=4, subtract_pos=True):
+    """Get dense embeddings from any model via translated passes."""
+    return run_dino_dense(model, x_np, dense_stride=dense_stride, subtract_pos=subtract_pos)
 
 def prep_image(img, downsample_factor=1):
     """Downscale and crop to patch-aligned (multiple of 16) dimensions."""
@@ -370,12 +434,13 @@ def show_datasets(w):
         stack = np.stack(data[dname]['images'])  # (N, H, W)
         w.add_image(stack, name=dname)
 
-def task2(w, stride=16, downsample_factor=1, n_images=3, mode='nearest', dense=False, subtract_pos=True):
+def task2(w, stride=16, downsample_factor=1, n_images=3, mode='nearest', dense=False, subtract_pos=True, figures_dir='figures'):
     """Run DINO on images, per-image mean subtraction, joint PCA, scrollable in napari.
     stride: patch embedding stride (ignored if dense=True).
     downsample_factor: locally downscale s0 images by this factor before running DINO.
     n_images: how many images per dataset to use.
-    dense: if True, use run_dino_dense (translated passes at native stride=16) instead of hacking stride."""
+    dense: if True, use get_embeddings (translated passes at native stride) instead of hacking stride."""
+    import matplotlib.pyplot as plt
     patch_size = 16
     model = load_dino()
     if not dense:
@@ -397,7 +462,7 @@ def task2(w, stride=16, downsample_factor=1, n_images=3, mode='nearest', dense=F
         for i, x_crop in enumerate(crops):
             print(f"{dname} [{i}] inference...")
             if dense:
-                token_grid = run_dino_dense(model, x_crop, dense_stride=stride, subtract_pos=subtract_pos)  # (pH, pW, D)
+                token_grid = get_embeddings(model, x_crop, dense_stride=stride, subtract_pos=subtract_pos)  # (pH, pW, D)
                 pH_i, pW_i = token_grid.shape[:2]
                 tokens = token_grid.reshape(-1, token_grid.shape[2])
             else:
@@ -448,6 +513,18 @@ def task2(w, stride=16, downsample_factor=1, n_images=3, mode='nearest', dense=F
         if w is not None:
             w.add_image(raw_stack, name=f'{label} raw')
             w.add_image(pca_stack, name=f'{label} PCA', rgb=True)
+
+        # Save tiled PCA grid as PNG
+        os.makedirs(figures_dir, exist_ok=True)
+        pca_grid = _tile_grid(list(pca_stack))
+        fig, ax = plt.subplots(1, 1, figsize=(12, 12))
+        ax.imshow(pca_grid)
+        ax.set_title(f'PCA: {dname}')
+        ax.axis('off')
+        pca_path = os.path.join(figures_dir, f'task2_pca_{dname}.png')
+        fig.savefig(pca_path, bbox_inches='tight', dpi=150)
+        plt.close(fig)
+        print(f"  Saved {pca_path}")
 
         
 def mitolocations():
@@ -527,7 +604,8 @@ def run_everything(cfg=None):
     if tasks['run_task2']:
         t2 = cfg['task2']
         task2(w, stride=g['stride'], downsample_factor=g['downsample_factor'],
-              n_images=t2['n_images'], dense=t2['dense'], subtract_pos=g['subtract_pos'])
+              n_images=t2['n_images'], dense=t2['dense'], subtract_pos=g['subtract_pos'],
+              figures_dir=g['figures_dir'])
 
     ## Task 3: Mito retrieval — average cosine similarity from query points across targets.
     if tasks['run_task3']:
@@ -568,7 +646,7 @@ def task3(w, query_ds='kidney', target_ds='kidney', query_idxs=None, n_targets=3
         x_crop = prep_image(data[query_ds]['images'][i], downsample_factor)
 
         print(f"Query {query_ds}[{i}]: computing embeddings...")
-        token_grid = run_dino_dense(model, x_crop, dense_stride=dense_stride)
+        token_grid = get_embeddings(model, x_crop, dense_stride=dense_stride)
         qy, qx = mito_yx[0] // downsample_factor, mito_yx[1] // downsample_factor
         pH, pW = token_grid.shape[:2]
         qi = min(qy // dense_stride, pH - 1)
@@ -587,7 +665,7 @@ def task3(w, query_ds='kidney', target_ds='kidney', query_idxs=None, n_targets=3
         x_crop = prep_image(img, downsample_factor)
 
         print(f"Target {target_ds}[{i}]: computing embeddings...")
-        token_grid = run_dino_dense(model, x_crop, dense_stride=dense_stride)
+        token_grid = get_embeddings(model, x_crop, dense_stride=dense_stride)
         pH, pW, D = token_grid.shape
 
         tokens_flat = torch.from_numpy(token_grid.reshape(-1, D))
@@ -624,8 +702,9 @@ def _tile_grid(images, ncols=None):
     if ncols is None:
         ncols = int(np.ceil(np.sqrt(n)))
     nrows = int(np.ceil(n / ncols))
-    H, W = images[0].shape
-    grid = np.zeros((nrows * H, ncols * W), dtype=images[0].dtype)
+    H, W = images[0].shape[:2]
+    extra = images[0].shape[2:] # () for grayscale, (3,) for RGB
+    grid = np.zeros((nrows * H, ncols * W) + extra, dtype=images[0].dtype)
     for idx, img in enumerate(images):
         r, c = divmod(idx, ncols)
         grid[r*H:(r+1)*H, c*W:(c+1)*W] = img
