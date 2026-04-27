@@ -217,6 +217,7 @@ def load_dino(model_name=None):
         model_name = os.environ.get('DINO_MODEL', 'vits16')
     dinodir = "./../dinov3/"
     info = DINO_MODELS[model_name]
+    torch.hub.set_dir(os.path.join(os.getcwd(), 'dinoweights'))  # avoid duplicating weights to ~/.cache
     model = torch.hub.load(dinodir, info['hub_name'], source='local', weights=info['weights'])
     model.eval()
     gpu_name, gpu_mem = detect_gpu()

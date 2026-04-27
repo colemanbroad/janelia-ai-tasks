@@ -7,7 +7,6 @@
 *.pth
 *.pyc
 figures/*.png
-figures-remote/
-figures-2/
+figures*/
 .env
 
