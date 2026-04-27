@@ -470,6 +470,12 @@ def mitolocations():
     return {'kidney':kidney, 'liver':liver}
 
 
+import sys
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
+
 def _deep_merge(base, override):
     """Merge override dict into base dict, recursing into sub-dicts."""
     merged = dict(base)
@@ -481,7 +487,6 @@ def _deep_merge(base, override):
     return merged
 
 def load_config(path=None):
-    import tomllib
     with open('config.toml', 'rb') as f:
         cfg = tomllib.load(f)
     if path is not None and path != 'config.toml':
