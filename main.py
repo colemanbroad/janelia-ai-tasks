@@ -482,6 +482,13 @@ def run_everything(cfg=None):
     g = cfg['general']
     tasks = cfg['tasks']
 
+    # Fast mode overrides
+    if g.get('fast', False):
+        g['downsample_factor'] = 4
+        cfg['task2']['n_images'] = 4
+        cfg['task3']['n_targets'] = 4
+        print("Fast mode: downsample_factor=4, n_images=4, n_targets=4")
+
     # Set seeds for reproducibility
     np.random.seed(g['seed'])
     torch.manual_seed(g['seed'])

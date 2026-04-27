@@ -6,6 +6,7 @@ downsample_factor = 2
 subtract_pos = true
 seed = 42
 figures_dir = "figures"
+fast = false           # if true, downsample_factor=4 and limit to 4 images
 
 [tasks]
 run_task1 = true
