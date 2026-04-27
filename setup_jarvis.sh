@@ -1,6 +1,6 @@
 set -exo pipefail
 
-cd /root/
+cd /home/jl_fs/
 
 ## we can actually just copy-paste this into term after ssh connection
 
