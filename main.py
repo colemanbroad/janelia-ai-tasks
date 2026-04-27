@@ -470,10 +470,25 @@ def mitolocations():
     return {'kidney':kidney, 'liver':liver}
 
 
-def load_config(path='config.toml'):
+def _deep_merge(base, override):
+    """Merge override dict into base dict, recursing into sub-dicts."""
+    merged = dict(base)
+    for k, v in override.items():
+        if k in merged and isinstance(merged[k], dict) and isinstance(v, dict):
+            merged[k] = _deep_merge(merged[k], v)
+        else:
+            merged[k] = v
+    return merged
+
+def load_config(path=None):
     import tomllib
-    with open(path, 'rb') as f:
-        return tomllib.load(f)
+    with open('config.toml', 'rb') as f:
+        cfg = tomllib.load(f)
+    if path is not None and path != 'config.toml':
+        with open(path, 'rb') as f:
+            overrides = tomllib.load(f)
+        cfg = _deep_merge(cfg, overrides)
+    return cfg
 
 def run_everything(cfg=None):
     if cfg is None:
@@ -481,13 +496,6 @@ def run_everything(cfg=None):
 
     g = cfg['general']
     tasks = cfg['tasks']
-
-    # Fast mode overrides
-    if g.get('fast', False):
-        g['downsample_factor'] = 4
-        cfg['task2']['n_images'] = 4
-        cfg['task3']['n_targets'] = 4
-        print("Fast mode: downsample_factor=4, n_images=4, n_targets=4")
 
     # Set seeds for reproducibility
     np.random.seed(g['seed'])
@@ -528,7 +536,7 @@ def run_everything(cfg=None):
     ## Task 3 figures: save tiled grids for all query/target combinations.
     if tasks['run_task3_all']:
         task3_all(dense_stride=g['stride'], downsample_factor=g['downsample_factor'],
-                  out_dir=g['figures_dir'])
+                  n_targets=cfg['task3']['n_targets'], out_dir=g['figures_dir'])
 
 
 def task3(w, query_ds='kidney', target_ds='kidney', query_idxs=None, n_targets=3,
@@ -618,8 +626,9 @@ def _tile_grid(images, ncols=None):
         grid[r*H:(r+1)*H, c*W:(c+1)*W] = img
     return grid
 
-def task3_all(dense_stride=8, downsample_factor=2, out_dir='figures'):
-    """Run task3 for all 4 query/target combinations and save tiled grids as PNGs."""
+def task3_all(dense_stride=8, downsample_factor=2, n_targets=None, out_dir='figures'):
+    """Run task3 for all 4 query/target combinations and save tiled grids as PNGs.
+    n_targets: number of target images per combo. None = all available."""
     import matplotlib.pyplot as plt
     os.makedirs(out_dir, exist_ok=True)
 
@@ -634,11 +643,11 @@ def task3_all(dense_stride=8, downsample_factor=2, out_dir='figures'):
 
     for query_ds, target_ds in combos:
         query_idxs = list(range(len(mitos[query_ds])))
-        n_targets = len(data[target_ds]['images'])
-        print(f"\n=== q={query_ds} t={target_ds} ({len(query_idxs)} queries, {n_targets} targets) ===")
+        nt = n_targets if n_targets is not None else len(data[target_ds]['images'])
+        print(f"\n=== q={query_ds} t={target_ds} ({len(query_idxs)} queries, {nt} targets) ===")
         raw_stack, sim_stack = task3(
             w=None, query_ds=query_ds, target_ds=target_ds,
-            query_idxs=query_idxs, n_targets=n_targets,
+            query_idxs=query_idxs, n_targets=nt,
             dense_stride=dense_stride, downsample_factor=downsample_factor,
         )
 

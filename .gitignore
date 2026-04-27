@@ -8,5 +8,6 @@
 *.pyc
 figures/*.png
 figures-remote/
+figures-2/
 .env
 

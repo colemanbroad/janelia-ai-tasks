@@ -1,0 +1,7 @@
+[general]
+downsample_factor = 2
+subtract_pos = false
+model = "vitl16"
+
+[task3]
+n_targets = 4
