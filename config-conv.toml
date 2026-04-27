@@ -1,6 +1,6 @@
 [general]
 downsample_factor = 2
-model = "vits16"
+model = "convnext_tiny"
 stride = 4
 
 [tasks]
@@ -12,4 +12,9 @@ run_task3_all = false
 [task2]
 n_images = 4
 dense = true
+
+[task3]
+query_ds = "kidney"
+target_ds = "kidney"
+n_targets = 7
 
