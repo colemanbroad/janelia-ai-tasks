@@ -1,4 +1,4 @@
-./.DS_Store
+.DS_Store
 ./clay.com.html
 ./__pycache__
 ./.venv
@@ -7,3 +7,6 @@
 *.pth
 *.pyc
 figures/*.png
+figures-remote/
+.env
+

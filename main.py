@@ -157,7 +157,7 @@ DINO_MODELS = {
     },
     'vitl16': {
         'hub_name': 'dinov3_vitl16',
-        'weights': 'dinoweights/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth',
+        'weights': 'dinoweights/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth',
     },
 }
 
