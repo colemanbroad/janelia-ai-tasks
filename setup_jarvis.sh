@@ -14,3 +14,4 @@ sh dl_weights.sh
 add-apt-repository ppa:maveonair/helix-editor
 apt update
 apt install helix
+

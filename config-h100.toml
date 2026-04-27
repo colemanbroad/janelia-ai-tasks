@@ -1,7 +1,15 @@
 [general]
 downsample_factor = 2
-subtract_pos = false
+subtract_pos = true
 model = "vitl16"
+stride = 2
 
-[task3]
-n_targets = 4
+[tasks]
+run_task1 = false
+run_task2 = true
+run_task3 = false
+run_task3_all = false
+
+[task2]
+n_images = 4
+dense = true
