@@ -372,9 +372,15 @@ def run_convnext_dense(model, x_np):
     print(f"ConvNeXt inference: {dt:.1f}s for input ({H},{W}) -> {token_grid.shape}")
     return token_grid
 
+def is_convnext():
+    return os.environ.get('DINO_MODEL', 'vits16').startswith('convnext')
+
 def get_embeddings(model, x_np, dense_stride=4, subtract_pos=True):
-    """Get dense embeddings from any model via translated passes."""
-    return run_dino_dense(model, x_np, dense_stride=dense_stride, subtract_pos=subtract_pos)
+    """Get dense embeddings. Uses translated passes for ViT, single pass for ConvNeXt."""
+    if is_convnext():
+        return run_convnext_dense(model, x_np)
+    else:
+        return run_dino_dense(model, x_np, dense_stride=dense_stride, subtract_pos=subtract_pos)
 
 def prep_image(img, downsample_factor=1):
     """Downscale and crop to patch-aligned (multiple of 16) dimensions."""
