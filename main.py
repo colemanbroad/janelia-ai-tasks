@@ -295,10 +295,10 @@ def prep_image(img, downsample_factor=1):
     H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
     return img[:H, :W]
 
-def task1(n_samples=20, crop_size=1024):
+def task1(n_samples=20, crop_size=1024, seed=42):
     """Download random 2D crops from liver and kidney datasets at s0.
     All crops are exactly crop_size x crop_size and fully within the volume."""
-    np.random.seed(42)
+    np.random.seed(seed)
 
     datasets = {
         'liver': {
@@ -470,8 +470,26 @@ def mitolocations():
     return {'kidney':kidney, 'liver':liver}
 
 
-def run_everything(headless=False):
-    if headless:
+def load_config(path='config.toml'):
+    import tomllib
+    with open(path, 'rb') as f:
+        return tomllib.load(f)
+
+def run_everything(cfg=None):
+    if cfg is None:
+        cfg = load_config()
+
+    g = cfg['general']
+    tasks = cfg['tasks']
+
+    # Set seeds for reproducibility
+    np.random.seed(g['seed'])
+    torch.manual_seed(g['seed'])
+
+    # Set model from config
+    os.environ['DINO_MODEL'] = g['model']
+
+    if g['headless']:
         w = None
     else:
         try:
@@ -482,16 +500,28 @@ def run_everything(headless=False):
             w = None
 
     ## Task 1: Download 20 random 1024x1024 s0 crops from liver and kidney volumes.
-    task1()
+    if tasks['run_task1']:
+        task1(seed=g['seed'])
 
     ## Task 2: Dense DINO embeddings + joint PCA visualized as RGB across multiple images.
-    task2(w, stride=2, downsample_factor=2, n_images=4, dense=True, subtract_pos=True)
+    if tasks['run_task2']:
+        t2 = cfg['task2']
+        task2(w, stride=g['stride'], downsample_factor=g['downsample_factor'],
+              n_images=t2['n_images'], dense=t2['dense'], subtract_pos=g['subtract_pos'])
 
-    ## Task 3: Mito retrieval — average cosine similarity from 7 kidney query points across 7 kidney targets.
-    task3(w, query_ds='kidney', target_ds='kidney', query_idxs=[0,1,2,3,4,5,6], n_targets=7, downsample_factor=2, dense_stride=2)
+    ## Task 3: Mito retrieval — average cosine similarity from query points across targets.
+    if tasks['run_task3']:
+        t3 = cfg['task3']
+        mitos = mitolocations()
+        query_idxs = list(range(len(mitos[t3['query_ds']])))
+        task3(w, query_ds=t3['query_ds'], target_ds=t3['target_ds'],
+              query_idxs=query_idxs, n_targets=t3['n_targets'],
+              downsample_factor=g['downsample_factor'], dense_stride=g['stride'])
 
     ## Task 3 figures: save tiled grids for all query/target combinations.
-    task3_all(dense_stride=2, downsample_factor=2)
+    if tasks['run_task3_all']:
+        task3_all(dense_stride=g['stride'], downsample_factor=g['downsample_factor'],
+                  out_dir=g['figures_dir'])
 
 
 def task3(w, query_ds='kidney', target_ds='kidney', query_idxs=None, n_targets=3,
@@ -648,21 +678,20 @@ def task3_all(dense_stride=8, downsample_factor=2, out_dir='figures'):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--headless', action='store_true', help='Run without napari, use larger model if big GPU available')
+    parser.add_argument('-c', '--config', default='config.toml', help='Path to config file')
     args = parser.parse_args()
+
+    cfg = load_config(args.config)
 
     # Auto-detect: if big GPU available, default to headless with large model
     gpu_name, gpu_mem = detect_gpu()
     if gpu_name and gpu_mem >= 40:
-        print(f"Detected large GPU: {gpu_name} ({gpu_mem:.0f} GB) — defaulting to headless + vitl16")
-        args.headless = True
-
-    if args.headless:
-        # Use larger model if weights exist
+        print(f"Detected large GPU: {gpu_name} ({gpu_mem:.0f} GB)")
+        cfg['general']['headless'] = True
         if os.path.exists(DINO_MODELS['vitl16']['weights']):
-            os.environ['DINO_MODEL'] = 'vitl16'
-            print("Using vitl16 model")
-        else:
-            print(f"vitl16 weights not found at {DINO_MODELS['vitl16']['weights']}, falling back to vits16")
+            cfg['general']['model'] = 'vitl16'
+            print("Auto-selecting vitl16 model")
 
-    run_everything(headless=args.headless)
+    print(f"Config: model={cfg['general']['model']}, stride={cfg['general']['stride']}, "
+          f"downsample={cfg['general']['downsample_factor']}, headless={cfg['general']['headless']}")
+    run_everything(cfg)

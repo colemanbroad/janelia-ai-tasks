@@ -1,0 +1,23 @@
+[general]
+headless = false
+model = "vits16"       # "vits16" or "vitl16"
+stride = 2
+downsample_factor = 2
+subtract_pos = true
+seed = 42
+figures_dir = "figures"
+
+[tasks]
+run_task1 = true
+run_task2 = true
+run_task3 = true
+run_task3_all = true
+
+[task2]
+n_images = 4
+dense = true
+
+[task3]
+query_ds = "kidney"
+target_ds = "kidney"
+n_targets = 7
