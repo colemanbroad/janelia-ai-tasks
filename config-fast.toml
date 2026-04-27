@@ -1,15 +1,6 @@
 [general]
-downsample_factor = 2
-model = "vits16"
-stride = 4
+downsample_factor = 4
+tasks = [2]
 
-[tasks]
-run_task1 = false
-run_task2 = true
-run_task3 = false
-run_task3_all = false
-
-[task2]
-n_images = 4
-dense = true
-
+[task3]
+n_targets = 4

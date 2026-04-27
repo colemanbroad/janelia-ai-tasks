@@ -6,12 +6,7 @@ downsample_factor = 2
 subtract_pos = true
 seed = 42
 figures_dir = "figures"
-
-[tasks]
-run_task1 = true
-run_task2 = true
-run_task3 = true
-run_task3_all = true
+tasks = [1, 2, 3, 4]  # 1=download, 2=PCA, 3=retrieval, 4=four-way retrieval + figures
 
 [task2]
 n_images = 4

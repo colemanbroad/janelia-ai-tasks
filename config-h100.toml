@@ -1,15 +1,4 @@
 [general]
-downsample_factor = 2
-subtract_pos = true
+headless = true
 model = "vitl16"
-stride = 2
-
-[tasks]
-run_task1 = false
-run_task2 = true
-run_task3 = false
-run_task3_all = false
-
-[task2]
-n_images = 4
-dense = true
+tasks = [2]

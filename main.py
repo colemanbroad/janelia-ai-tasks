@@ -577,7 +577,7 @@ def run_everything(cfg=None):
         cfg = load_config()
 
     g = cfg['general']
-    tasks = cfg['tasks']
+    tasks = g.get('tasks', [1, 2, 3, 4])
 
     # Set seeds for reproducibility
     np.random.seed(g['seed'])
@@ -596,19 +596,21 @@ def run_everything(cfg=None):
             print("napari not installed, running without viewer")
             w = None
 
+    print(f"Running tasks: {tasks}")
+
     ## Task 1: Download 20 random 1024x1024 s0 crops from liver and kidney volumes.
-    if tasks['run_task1']:
+    if 1 in tasks:
         task1(seed=g['seed'])
 
     ## Task 2: Dense DINO embeddings + joint PCA visualized as RGB across multiple images.
-    if tasks['run_task2']:
+    if 2 in tasks:
         t2 = cfg['task2']
         task2(w, stride=g['stride'], downsample_factor=g['downsample_factor'],
               n_images=t2['n_images'], dense=t2['dense'], subtract_pos=g['subtract_pos'],
               figures_dir=g['figures_dir'])
 
     ## Task 3: Mito retrieval — average cosine similarity from query points across targets.
-    if tasks['run_task3']:
+    if 3 in tasks:
         t3 = cfg['task3']
         mitos = mitolocations()
         query_idxs = list(range(len(mitos[t3['query_ds']])))
@@ -616,8 +618,8 @@ def run_everything(cfg=None):
               query_idxs=query_idxs, n_targets=t3['n_targets'],
               downsample_factor=g['downsample_factor'], dense_stride=g['stride'])
 
-    ## Task 3 figures: save tiled grids for all query/target combinations.
-    if tasks['run_task3_all']:
+    ## Task 4: Save tiled grids for all query/target combinations.
+    if 4 in tasks:
         task3_all(dense_stride=g['stride'], downsample_factor=g['downsample_factor'],
                   n_targets=cfg['task3']['n_targets'], out_dir=g['figures_dir'])
 
