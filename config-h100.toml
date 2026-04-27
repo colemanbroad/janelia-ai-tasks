@@ -1,4 +1,4 @@
 [general]
 headless = true
-model = "vitl16"
-tasks = [2]
+# model = "vitl16"
+tasks = [5]

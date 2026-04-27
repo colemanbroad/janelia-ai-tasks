@@ -623,6 +623,11 @@ def run_everything(cfg=None):
         task3_all(dense_stride=g['stride'], downsample_factor=g['downsample_factor'],
                   n_targets=cfg['task3']['n_targets'], out_dir=g['figures_dir'])
 
+    ## Task 5: Compare all available models on one image from each dataset.
+    if 5 in tasks:
+        task5(downsample_factor=g['downsample_factor'], dense_stride=g['stride'],
+              subtract_pos=g['subtract_pos'], figures_dir=g['figures_dir'])
+
 
 def task3(w, query_ds='kidney', target_ds='kidney', query_idxs=None, n_targets=3,
          dense_stride=8, downsample_factor=1):
@@ -776,6 +781,62 @@ def task3_all(dense_stride=8, downsample_factor=2, n_targets=None, out_dir='figu
         print(f"  Saved {raw_path}")
         print(f"  Saved {sim_path}")
         print(f"  Saved {gif_path}")
+
+def task5(downsample_factor=2, dense_stride=4, subtract_pos=True, figures_dir='figures'):
+    """Compare all available models on one image from each dataset.
+    Saves a PCA RGB PNG for each (model, dataset) pair."""
+    import matplotlib.pyplot as plt
+    os.makedirs(figures_dir, exist_ok=True)
+
+    data = load_datasets()
+
+    # Find which models have weights on disk
+    available = {k: v for k, v in DINO_MODELS.items() if os.path.exists(v['weights'])}
+    print(f"Available models: {list(available.keys())}")
+
+    for model_name in available:
+        print(f"\n=== Loading {model_name} ===")
+        os.environ['DINO_MODEL'] = model_name
+        model = load_dino(model_name)
+
+        for dname in ['liver', 'kidney']:
+            img = data[dname]['images'][0]
+            x_crop = prep_image(img, downsample_factor)
+            H, W = x_crop.shape
+
+            print(f"  {dname}: inference...")
+            token_grid = get_embeddings(model, x_crop, dense_stride=dense_stride, subtract_pos=subtract_pos)
+            pH, pW = token_grid.shape[:2]
+            tokens = token_grid.reshape(-1, token_grid.shape[2])
+
+            # Per-image mean subtraction + PCA
+            tokens = tokens - tokens.mean(axis=0, keepdims=True)
+            pca = PCA(n_components=3)
+            pca_features = pca.fit_transform(tokens)
+            for c in range(3):
+                lo, hi = pca_features[:, c].min(), pca_features[:, c].max()
+                pca_features[:, c] = (pca_features[:, c] - lo) / (hi - lo + 1e-8)
+
+            pca_grid = pca_features.reshape(pH, pW, 3)
+            pca_tensor = torch.from_numpy(pca_grid).permute(2, 0, 1).unsqueeze(0)
+            pca_img = torch.nn.functional.interpolate(pca_tensor, size=(H, W), mode='bilinear', align_corners=False)
+            pca_img = pca_img.squeeze(0).permute(1, 2, 0).numpy()
+
+            fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+            axes[0].imshow(x_crop, cmap='gray')
+            axes[0].set_title(f'{dname} raw')
+            axes[0].axis('off')
+            axes[1].imshow(pca_img)
+            axes[1].set_title(f'{model_name} PCA')
+            axes[1].axis('off')
+            path = os.path.join(figures_dir, f'task5_{model_name}_{dname}.png')
+            fig.savefig(path, bbox_inches='tight', dpi=150)
+            plt.close(fig)
+            print(f"  Saved {path}")
+
+        # Free GPU memory before loading next model
+        del model
+        torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
 if __name__ == '__main__':
     import argparse
