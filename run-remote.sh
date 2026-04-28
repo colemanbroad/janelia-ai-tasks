@@ -14,4 +14,4 @@ rsync -av -e 'ssh -o StrictHostKeyChecking=no' \
   ./ $HOST:$REMOTE_DIR/
 
 ssh -o StrictHostKeyChecking=no $HOST "cd $REMOTE_DIR && PYTHONUNBUFFERED=1 python main.py -c $CONFIG"
-rsync -av -e 'ssh -o StrictHostKeyChecking=no' $HOST:/home/janelia-ai-tasks/figures/*.gif ./figures-remote/
+rsync -av -e 'ssh -o StrictHostKeyChecking=no' $HOST:/home/janelia-ai-tasks/figures/* ./figures-remote/

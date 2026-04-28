@@ -539,10 +539,7 @@ def task2(cfg):
 
     g = cfg.general
     t2 = cfg.task2
-    patch_size = 16
     model = load_dino(g.model)
-    if not t2.dense:
-        model.patch_embed.proj.stride = (g.stride, g.stride)
 
     data = load_datasets()
 
@@ -555,26 +552,20 @@ def task2(cfg):
         grid_shapes = []
         for i, x_crop in enumerate(crops):
             print(f"{dname} [{i}] inference...")
-            if t2.dense:
-                token_grid = get_embeddings(model, x_crop, dense_stride=g.stride, subtract_pos=g.subtract_pos, model_name=g.model, dataset=dname)
-                pH_i, pW_i = token_grid.shape[:2]
-                tokens = token_grid.reshape(-1, token_grid.shape[2])
-            else:
-                y_full = run_dino(model, x_crop)
-                tokens = y_full['x_norm_patchtokens'].squeeze(0).numpy()
-                pH_i = (H - patch_size) // g.stride + 1
-                pW_i = (W - patch_size) // g.stride + 1
+            token_grid = get_embeddings(model, x_crop, dense_stride=g.stride, subtract_pos=g.subtract_pos, model_name=g.model, dataset=dname)
+            pH_i, pW_i = token_grid.shape[:2]
+            tokens = token_grid.reshape(-1, token_grid.shape[2])
             all_tokens.append(tokens)
             grid_shapes.append((pH_i, pW_i))
 
         # Per-image mean subtraction, then joint PCA
-        for i in range(len(all_tokens)):
-            all_tokens[i] = all_tokens[i] - all_tokens[i].mean(axis=0, keepdims=True)
+        # for i in range(len(all_tokens)):
+        #     all_tokens[i] = all_tokens[i] - all_tokens[i].mean(axis=0, keepdims=True)
 
         all_tokens_cat = np.concatenate(all_tokens, axis=0)
         pca = PCA(n_components=3)
         all_pca = pca.fit_transform(all_tokens_cat)
-        print(f"{dname}: joint PCA variance = {pca.explained_variance_ratio_}")
+        print(f"{dname}: joint PCA variance = {pca.explained_variance_ratio_} (total={pca.explained_variance_ratio_.sum():.3f})")
 
         # Normalize globally -- RGB in [0,1]
         for c in range(3):
@@ -608,9 +599,14 @@ def task2(cfg):
         pca_grid = _tile_grid(list(pca_stack))
         raw_pil = Image.fromarray(raw_grid.astype(np.uint8))
         pca_pil = Image.fromarray((pca_grid * 255).astype(np.uint8))
+
+        raw_path = os.path.join(g.figures_dir, f'task2_raw_{dname}.png')
+        pca_path = os.path.join(g.figures_dir, f'task2_pca_{dname}.png')
         gif_path = os.path.join(g.figures_dir, f'task2_{dname}.gif')
+        raw_pil.save(raw_path)
+        pca_pil.save(pca_path)
         raw_pil.save(gif_path, save_all=True, append_images=[pca_pil], duration=1000, loop=0)
-        print(f"  Saved {gif_path}")
+        print(f"  Saved {raw_path}, {pca_path}, {gif_path}")
 
         
 def mitolocations():
@@ -672,6 +668,12 @@ def run_everything(cfg=None):
     # Set seeds for reproducibility
     np.random.seed(g.seed)
     torch.manual_seed(g.seed)
+
+    # Clean figures directory
+    import shutil
+    if os.path.exists(g.figures_dir):
+        shutil.rmtree(g.figures_dir)
+    os.makedirs(g.figures_dir)
 
     print(f"Running tasks: {tasks}")
 
@@ -800,10 +802,14 @@ def task3(cfg):
 
         raw_pil = Image.fromarray(raw_grid.astype(np.uint8))
         sim_pil = Image.fromarray(_apply_colormap(sim_grid))
+
+        raw_path = os.path.join(out_dir, f'task3_raw_q{query_ds}_t{target_ds}.png')
+        sim_path = os.path.join(out_dir, f'task3_sim_q{query_ds}_t{target_ds}.png')
         gif_path = os.path.join(out_dir, f'task3_q{query_ds}_t{target_ds}.gif')
+        raw_pil.save(raw_path)
+        sim_pil.save(sim_path)
         raw_pil.save(gif_path, save_all=True, append_images=[sim_pil], duration=1000, loop=0)
-        print(f"  Saved {gif_path}")
-        print(f"  Saved {gif_path}")
+        print(f"  Saved {raw_path}, {sim_path}, {gif_path}")
 
 def task4(cfg):
     """Compare all available models on one image from each dataset.
@@ -835,6 +841,7 @@ def task4(cfg):
             tokens = tokens - tokens.mean(axis=0, keepdims=True)
             pca = PCA(n_components=3)
             pca_features = pca.fit_transform(tokens)
+            print(f"    PCA variance = {pca.explained_variance_ratio_} (total={pca.explained_variance_ratio_.sum():.3f})")
             for c in range(3):
                 lo, hi = pca_features[:, c].min(), pca_features[:, c].max()
                 pca_features[:, c] = (pca_features[:, c] - lo) / (hi - lo + 1e-8)
@@ -846,9 +853,14 @@ def task4(cfg):
 
             raw_pil = Image.fromarray(x_crop.astype(np.uint8))
             pca_pil = Image.fromarray((pca_img * 255).astype(np.uint8))
+
+            raw_path = os.path.join(g.figures_dir, f'task4_raw_{model_name}_{dname}.png')
+            pca_path = os.path.join(g.figures_dir, f'task4_pca_{model_name}_{dname}.png')
             gif_path = os.path.join(g.figures_dir, f'task4_{model_name}_{dname}.gif')
+            raw_pil.save(raw_path)
+            pca_pil.save(pca_path)
             raw_pil.save(gif_path, save_all=True, append_images=[pca_pil], duration=1000, loop=0)
-            print(f"  Saved {gif_path}")
+            print(f"  Saved {raw_path}, {pca_path}, {gif_path}")
 
         # Free GPU memory before loading next model
         del model
