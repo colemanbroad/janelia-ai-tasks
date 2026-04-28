@@ -549,6 +549,13 @@ def task2(cfg):
         Image.fromarray((pca_grid * 255).astype(np.uint8)).save(pca_path)
         print(f"  Saved {pca_path}")
 
+        # Save toggling GIF
+        raw_pil = Image.open(raw_path)
+        pca_pil = Image.open(pca_path)
+        gif_path = os.path.join(g.figures_dir, f'task2_{dname}.gif')
+        raw_pil.save(gif_path, save_all=True, append_images=[pca_pil], duration=1000, loop=0)
+        print(f"  Saved {gif_path}")
+
         
 def mitolocations():
     """Lists hold mito centerpoints for the first few images in each dataset. One point per image."""

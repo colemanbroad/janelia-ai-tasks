@@ -8,7 +8,7 @@ figures_dir = "figures"
 tasks = [2,]  # 1=download, 2=PCA, 3=retrieval+figures, 4=model comparison
 
 [task2]
-n_images = 4
+n_images = 9
 dense = true
 
 [task3]
