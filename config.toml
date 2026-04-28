@@ -1,12 +1,12 @@
 [general]
 model = "vitl16_sat"   # see DINO_MODELS in main.py for options
-# model = "vitb16"
+# model = "vitl16"
 stride = 4
 downsample_factor = 2
 subtract_pos = false
 seed = 42
 figures_dir = "figures"
-tasks = [3,]  # 1=download, 2=PCA, 3=retrieval+figures, 4=model comparison
+tasks = [2, 3,] # 1=download, 2=PCA, 3=retrieval+figures, 4=model comparison
 
 [task2]
 n_images = 9

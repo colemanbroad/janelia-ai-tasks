@@ -298,7 +298,10 @@ def load_dino(model_name='vits16'):
     print(f"  Model loaded in {time.time() - t0:.1f}s")
     return model
 
-_dataset_stats = {}  # cached per-dataset mean/std
+_dataset_stats = {
+  'liver' : [125.5, 34.5],
+  'kidney' : [124.2, 36.5],
+}
 
 def _compute_dataset_stats():
     """Compute mean and std across all images in each dataset. Cached."""
@@ -614,18 +617,18 @@ def mitolocations():
     """Lists hold mito centerpoints for the first few images in each dataset. One point per image."""
     kidney = [
         (347,550),
-        (430,400), # (388,139),
-        (470,140),
-        (128,68),
-        (971,930),
-        (220,852),
-        (353,233),
+        # (430,400), # (388,139),
+        # (470,140),
+        # (128,68),
+        # (971,930),
+        # (220,852),
+        # (353,233),
     ]
     liver = [
         (619,415),
-        (126,149),
-        (873,159),
-        (704,992),
+        # (126,149),
+        # (873,159),
+        # (704,992),
     ]
     return {'kidney':kidney, 'liver':liver}
 
@@ -678,7 +681,7 @@ def run_everything(cfg=None):
     if 4 in tasks: task4(cfg)
 
 
-def _retrieval(model, query_ds, target_ds, n_targets, downsample_factor=2, dense_stride=2, model_name='vits16'):
+def _retrieval(model, query_ds, target_ds, n_targets, downsample_factor=2, dense_stride=2, model_name='vits16', subtract_pos=True):
     """Embedding-based retrieval helper. Returns (raw_stack, sim_stack)."""
     data = load_datasets()
     mitos = mitolocations()
@@ -689,7 +692,14 @@ def _retrieval(model, query_ds, target_ds, n_targets, downsample_factor=2, dense
         x_crop = prep_image(data[query_ds]['images'][i], downsample_factor)
 
         print(f"Query {query_ds}[{i}]: computing embeddings...")
-        token_grid = get_embeddings(model, x_crop, dense_stride=dense_stride, model_name=model_name, dataset=query_ds)
+        token_grid = get_embeddings(model, x_crop, dense_stride=dense_stride, subtract_pos=subtract_pos, model_name=model_name, dataset=query_ds)
+
+        # Per-image mean subtraction
+        tokens = token_grid.reshape(-1, token_grid.shape[2])
+        tokens = tokens - tokens.mean(axis=0, keepdims=True)
+        token_grid = tokens.reshape(token_grid.shape)
+
+        # Scale mito x,y coords to match image scale
         qy, qx = mito_yx[0] // downsample_factor, mito_yx[1] // downsample_factor
         pH, pW = token_grid.shape[:2]
         qi = min(qy // dense_stride, pH - 1)
@@ -708,14 +718,19 @@ def _retrieval(model, query_ds, target_ds, n_targets, downsample_factor=2, dense
         x_crop = prep_image(img, downsample_factor)
 
         print(f"Target {target_ds}[{i}]: computing embeddings...")
-        token_grid = get_embeddings(model, x_crop, dense_stride=dense_stride, model_name=model_name, dataset=target_ds)
+        token_grid = get_embeddings(model, x_crop, dense_stride=dense_stride, subtract_pos=subtract_pos, model_name=model_name, dataset=target_ds)
         pH, pW, D = token_grid.shape
 
-        tokens_flat = torch.from_numpy(token_grid.reshape(-1, D))
+        # Per-image mean subtraction
+        tokens_flat = token_grid.reshape(-1, D)
+        tokens_flat = tokens_flat - tokens_flat.mean(axis=0, keepdims=True)
+        tokens_flat = torch.from_numpy(tokens_flat)
         tokens_normed = torch.nn.functional.normalize(tokens_flat, dim=-1)
 
         # Compute cosine similarity for each query, then average
         sim_accum = np.zeros(tokens_normed.shape[0], dtype=np.float64)
+        # FIX: this could be a single line like:
+        # sim_accum = (tokens_normed @ qemb.T).mean(-1).numpy()
         for qemb in query_embs:
             sim_accum += (tokens_normed @ qemb.T).squeeze(-1).numpy()
         sim_accum /= len(query_embs)
@@ -724,7 +739,7 @@ def _retrieval(model, query_ds, target_ds, n_targets, downsample_factor=2, dense
         H, W = x_crop.shape
         sim_tensor = torch.from_numpy(sim_grid).float().unsqueeze(0).unsqueeze(0)
         sim_img = torch.nn.functional.interpolate(sim_tensor, size=(H, W), mode='bilinear', align_corners=False)
-        sim_img = sim_img.squeeze().numpy()
+        sim_img = sim_img.squeeze(0).squeeze(0).numpy()
 
         raw_stack.append(x_crop)
         sim_stack.append(sim_img)
@@ -776,18 +791,15 @@ def task3(cfg):
         raw_stack, sim_stack = _retrieval(
             model, query_ds=query_ds, target_ds=target_ds, n_targets=nt,
             downsample_factor=g.downsample_factor, dense_stride=g.stride,
-            model_name=g.model,
+            model_name=g.model, subtract_pos=g.subtract_pos,
         )
 
         raw_grid = _tile_grid(list(raw_stack))
-        sim_grid = _tile_grid(list(sim_stack))
-
-        # Normalize sim to [0,1]
-        mi, ma = sim_grid.min(), sim_grid.max()
-        sim_norm = (sim_grid - mi) / (ma - mi + 1e-8)
+        sim_norm = (sim_stack - sim_stack.min()) / (sim_stack.max() - sim_stack.min() + 1e-8)
+        sim_grid = _tile_grid(list(sim_norm))
 
         raw_pil = Image.fromarray(raw_grid.astype(np.uint8))
-        sim_pil = Image.fromarray(_apply_colormap(sim_norm))
+        sim_pil = Image.fromarray(_apply_colormap(sim_grid))
         gif_path = os.path.join(out_dir, f'task3_q{query_ds}_t{target_ds}.gif')
         raw_pil.save(gif_path, save_all=True, append_images=[sim_pil], duration=1000, loop=0)
         print(f"  Saved {gif_path}")

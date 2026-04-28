@@ -214,5 +214,7 @@ This would eliminate the need for helix on the server.
 !! There's still a very strong spatial correlation, a consistent pattern that shows up in Task 3's
 retrieval results. It looks like a sinusoidal function with a period equal to the width of the image.
 
+We were min-max-01 normalizing AFTER combining images into a tiled grid. (but before applying colormap).
 
-
+OK, the problem with SAT models on task3 was that we didn't correctly plumb through the subtract_pos param!
+But now the task2 kidney results for vitl16 look way off. The colors look discrete and jumpy and clipped.
