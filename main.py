@@ -212,9 +212,7 @@ def detect_gpu():
     mem_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
     return name, mem_gb
 
-def load_dino(model_name=None):
-    if model_name is None:
-        model_name = os.environ.get('DINO_MODEL', 'vits16')
+def load_dino(model_name='vits16'):
     dinodir = "./../dinov3/"
     info = DINO_MODELS[model_name]
     torch.hub.set_dir(os.path.join(os.getcwd(), 'dinoweights'))  # avoid duplicating weights to ~/.cache
@@ -373,12 +371,9 @@ def run_convnext_dense(model, x_np):
     print(f"ConvNeXt inference: {dt:.1f}s for input ({H},{W}) -> {token_grid.shape}")
     return token_grid
 
-def is_convnext():
-    return os.environ.get('DINO_MODEL', 'vits16').startswith('convnext')
-
-def get_embeddings(model, x_np, dense_stride=4, subtract_pos=True):
+def get_embeddings(model, x_np, dense_stride=4, subtract_pos=True, model_name='vits16'):
     """Get dense embeddings. Uses translated passes for ViT, single pass for ConvNeXt."""
-    if is_convnext():
+    if model_name.startswith('convnext'):
         return run_convnext_dense(model, x_np)
     else:
         return run_dino_dense(model, x_np, dense_stride=dense_stride, subtract_pos=subtract_pos)
@@ -393,10 +388,9 @@ def prep_image(img, downsample_factor=1):
     H, W = (img.shape[0] // 16) * 16, (img.shape[1] // 16) * 16
     return img[:H, :W]
 
-def task1(n_samples=20, crop_size=1024, seed=42):
-    """Download random 2D crops from liver and kidney datasets at s0.
-    All crops are exactly crop_size x crop_size and fully within the volume."""
-    np.random.seed(seed)
+def task1(cfg, n_samples=20, crop_size=1024):
+    """Download random 2D crops from liver and kidney datasets at s0."""
+    np.random.seed(cfg.general.seed)
 
     datasets = {
         'liver': {
@@ -468,42 +462,36 @@ def show_datasets(w):
         stack = np.stack(data[dname]['images'])  # (N, H, W)
         w.add_image(stack, name=dname)
 
-def task2(w, stride=16, downsample_factor=1, n_images=3, mode='nearest', dense=False, subtract_pos=True, figures_dir='figures'):
-    """Run DINO on images, per-image mean subtraction, joint PCA, scrollable in napari.
-    stride: patch embedding stride (ignored if dense=True).
-    downsample_factor: locally downscale s0 images by this factor before running DINO.
-    n_images: how many images per dataset to use.
-    dense: if True, use get_embeddings (translated passes at native stride) instead of hacking stride."""
+def task2(cfg, w=None):
+    """Run DINO on images, per-image mean subtraction, joint PCA, scrollable in napari."""
     import matplotlib.pyplot as plt
+    g = cfg.general
+    t2 = cfg.task2
     patch_size = 16
-    model = load_dino()
-    if not dense:
-        model.patch_embed.proj.stride = (stride, stride)
+    model = load_dino(g.model)
+    if not t2.dense:
+        model.patch_embed.proj.stride = (g.stride, g.stride)
 
     data = load_datasets()
 
     for dname in ['liver', 'kidney']:
-        images = data[dname]['images'][:n_images]
-
-        # Downscale and crop to patch-aligned dims
-        crops = [prep_image(img, downsample_factor) for img in images]
-
+        images = data[dname]['images'][:t2.n_images]
+        crops = [prep_image(img, g.downsample_factor) for img in images]
         H, W = crops[0].shape
 
-        # Run DINO on all images, collect tokens + grid shapes
         all_tokens = []
         grid_shapes = []
         for i, x_crop in enumerate(crops):
             print(f"{dname} [{i}] inference...")
-            if dense:
-                token_grid = get_embeddings(model, x_crop, dense_stride=stride, subtract_pos=subtract_pos)  # (pH, pW, D)
+            if t2.dense:
+                token_grid = get_embeddings(model, x_crop, dense_stride=g.stride, subtract_pos=g.subtract_pos, model_name=g.model)
                 pH_i, pW_i = token_grid.shape[:2]
                 tokens = token_grid.reshape(-1, token_grid.shape[2])
             else:
                 y_full = run_dino(model, x_crop)
                 tokens = y_full['x_norm_patchtokens'].squeeze(0).numpy()
-                pH_i = (H - patch_size) // stride + 1
-                pW_i = (W - patch_size) // stride + 1
+                pH_i = (H - patch_size) // g.stride + 1
+                pW_i = (W - patch_size) // g.stride + 1
             all_tokens.append(tokens)
             grid_shapes.append((pH_i, pW_i))
 
@@ -533,8 +521,7 @@ def task2(w, stride=16, downsample_factor=1, n_images=3, mode='nearest', dense=F
 
             pca_grid = pca_features.reshape(pH_i, pW_i, 3)
             pca_tensor = torch.from_numpy(pca_grid).permute(2, 0, 1).unsqueeze(0)
-            ac = dict(bilinear=False, nearest=None)[mode]
-            pca_img = torch.nn.functional.interpolate(pca_tensor, size=(H, W), mode=mode, align_corners=ac)
+            pca_img = torch.nn.functional.interpolate(pca_tensor, size=(H, W), mode='bilinear', align_corners=False)
             pca_img = pca_img.squeeze(0).permute(1, 2, 0).numpy()
 
             raw_stack.append(x_crop)
@@ -543,19 +530,18 @@ def task2(w, stride=16, downsample_factor=1, n_images=3, mode='nearest', dense=F
         raw_stack = np.stack(raw_stack)
         pca_stack = np.stack(pca_stack)
 
-        label = f'{dname} {"dense" if dense else "stride"}{stride} {downsample_factor}x'
+        label = f'{dname} {"dense" if t2.dense else "stride"}{g.stride} {g.downsample_factor}x'
         if w is not None:
             w.add_image(raw_stack, name=f'{label} raw')
             w.add_image(pca_stack, name=f'{label} PCA', rgb=True)
 
-        # Save tiled PCA grid as PNG
-        os.makedirs(figures_dir, exist_ok=True)
+        os.makedirs(g.figures_dir, exist_ok=True)
         pca_grid = _tile_grid(list(pca_stack))
         fig, ax = plt.subplots(1, 1, figsize=(12, 12))
         ax.imshow(pca_grid)
         ax.set_title(f'PCA: {dname}')
         ax.axis('off')
-        pca_path = os.path.join(figures_dir, f'task2_pca_{dname}.png')
+        pca_path = os.path.join(g.figures_dir, f'task2_pca_{dname}.png')
         fig.savefig(pca_path, bbox_inches='tight', dpi=150)
         plt.close(fig)
         print(f"  Saved {pca_path}")
@@ -597,6 +583,17 @@ def _deep_merge(base, override):
             merged[k] = v
     return merged
 
+def _dict_to_ns(d):
+    """Recursively convert a dict to nested SimpleNamespace."""
+    from types import SimpleNamespace
+    ns = SimpleNamespace()
+    for k, v in d.items():
+        if isinstance(v, dict):
+            setattr(ns, k, _dict_to_ns(v))
+        else:
+            setattr(ns, k, v)
+    return ns
+
 def load_config(path=None):
     with open('config.toml', 'rb') as f:
         cfg = tomllib.load(f)
@@ -604,23 +601,20 @@ def load_config(path=None):
         with open(path, 'rb') as f:
             overrides = tomllib.load(f)
         cfg = _deep_merge(cfg, overrides)
-    return cfg
+    return _dict_to_ns(cfg)
 
 def run_everything(cfg=None):
     if cfg is None:
         cfg = load_config()
 
-    g = cfg['general']
-    tasks = g.get('tasks', [1, 2, 3, 4])
+    g = cfg.general
+    tasks = getattr(g, 'tasks', [1, 2, 3, 4])
 
     # Set seeds for reproducibility
-    np.random.seed(g['seed'])
-    torch.manual_seed(g['seed'])
+    np.random.seed(g.seed)
+    torch.manual_seed(g.seed)
 
-    # Set model from config
-    os.environ['DINO_MODEL'] = g['model']
-
-    if g['headless']:
+    if g.headless:
         w = None
     else:
         try:
@@ -632,62 +626,27 @@ def run_everything(cfg=None):
 
     print(f"Running tasks: {tasks}")
 
-    ## Task 1: Download 20 random 1024x1024 s0 crops from liver and kidney volumes.
-    if 1 in tasks:
-        task1(seed=g['seed'])
-
-    ## Task 2: Dense DINO embeddings + joint PCA visualized as RGB across multiple images.
-    if 2 in tasks:
-        t2 = cfg['task2']
-        task2(w, stride=g['stride'], downsample_factor=g['downsample_factor'],
-              n_images=t2['n_images'], dense=t2['dense'], subtract_pos=g['subtract_pos'],
-              figures_dir=g['figures_dir'])
-
-    ## Task 3: Mito retrieval — average cosine similarity from query points across targets.
-    if 3 in tasks:
-        t3 = cfg['task3']
-        mitos = mitolocations()
-        query_idxs = list(range(len(mitos[t3['query_ds']])))
-        task3(w, query_ds=t3['query_ds'], target_ds=t3['target_ds'],
-              query_idxs=query_idxs, n_targets=t3['n_targets'],
-              downsample_factor=g['downsample_factor'], dense_stride=g['stride'])
-
-    ## Task 4: Save tiled grids for all query/target combinations.
-    if 4 in tasks:
-        task3_all(dense_stride=g['stride'], downsample_factor=g['downsample_factor'],
-                  n_targets=cfg['task3']['n_targets'], out_dir=g['figures_dir'])
-
-    ## Task 5: Compare all available models on one image from each dataset.
-    if 5 in tasks:
-        task5(downsample_factor=g['downsample_factor'], dense_stride=g['stride'],
-              subtract_pos=g['subtract_pos'], figures_dir=g['figures_dir'])
+    if 1 in tasks: task1(cfg)
+    if 2 in tasks: task2(cfg, w)
+    if 3 in tasks: task3(cfg)
+    if 4 in tasks: task4(cfg)
 
 
-def task3(w, query_ds='kidney', target_ds='kidney', query_idxs=None, n_targets=3,
-         dense_stride=8, downsample_factor=1):
-    """Embedding-based retrieval: average query from multiple mito points, predict on target images.
-    query_ds/target_ds: 'liver' or 'kidney'.
-    query_idxs: which mito points to use as queries (indices into mitolocations). None = all.
-    n_targets: how many target images to predict on.
-    Results are collected into scrollable stacks."""
-    patch_size = 16
-
-    model = load_dino()
+def _retrieval(model, query_ds, target_ds, query_idxs, n_targets, downsample_factor=2, dense_stride=2, model_name='vits16'):
+    """Embedding-based retrieval helper. Returns (raw_stack, sim_stack)."""
     data = load_datasets()
     mitos = mitolocations()
 
-    # --- Select query points ---
     if query_idxs is None:
         query_idxs = list(range(len(mitos[query_ds])))
     query_points = [mitos[query_ds][i] for i in query_idxs]
 
-    # --- Collect query embeddings (normalized, not averaged yet) ---
-    query_embs = []  # list of (1, D) normalized tensors
+    query_embs = []
     for i, mito_yx in zip(query_idxs, query_points):
         x_crop = prep_image(data[query_ds]['images'][i], downsample_factor)
 
         print(f"Query {query_ds}[{i}]: computing embeddings...")
-        token_grid = get_embeddings(model, x_crop, dense_stride=dense_stride)
+        token_grid = get_embeddings(model, x_crop, dense_stride=dense_stride, model_name=model_name)
         qy, qx = mito_yx[0] // downsample_factor, mito_yx[1] // downsample_factor
         pH, pW = token_grid.shape[:2]
         qi = min(qy // dense_stride, pH - 1)
@@ -706,7 +665,7 @@ def task3(w, query_ds='kidney', target_ds='kidney', query_idxs=None, n_targets=3
         x_crop = prep_image(img, downsample_factor)
 
         print(f"Target {target_ds}[{i}]: computing embeddings...")
-        token_grid = get_embeddings(model, x_crop, dense_stride=dense_stride)
+        token_grid = get_embeddings(model, x_crop, dense_stride=dense_stride, model_name=model_name)
         pH, pW, D = token_grid.shape
 
         tokens_flat = torch.from_numpy(token_grid.reshape(-1, D))
@@ -730,11 +689,6 @@ def task3(w, query_ds='kidney', target_ds='kidney', query_idxs=None, n_targets=3
     raw_stack = np.stack(raw_stack)
     sim_stack = np.stack(sim_stack)
 
-    if w is not None:
-        label = f'q={query_ds}[{query_idxs}] t={target_ds}'
-        w.add_image(raw_stack, name=f'{label} raw')
-        w.add_image(sim_stack, name=f'{label} sim', colormap='inferno')
-
     return raw_stack, sim_stack
 
 def _tile_grid(images, ncols=None):
@@ -751,12 +705,14 @@ def _tile_grid(images, ncols=None):
         grid[r*H:(r+1)*H, c*W:(c+1)*W] = img
     return grid
 
-def task3_all(dense_stride=8, downsample_factor=2, n_targets=None, out_dir='figures'):
-    """Run task3 for all 4 query/target combinations and save tiled grids as PNGs.
-    n_targets: number of target images per combo. None = all available."""
+def task3(cfg):
+    """Run retrieval for all 4 query/target combinations and save tiled grids as PNGs."""
     import matplotlib.pyplot as plt
+    g = cfg.general
+    out_dir = g.figures_dir
     os.makedirs(out_dir, exist_ok=True)
 
+    model = load_dino(g.model)
     mitos = mitolocations()
     data = load_datasets()
     combos = [
@@ -768,12 +724,13 @@ def task3_all(dense_stride=8, downsample_factor=2, n_targets=None, out_dir='figu
 
     for query_ds, target_ds in combos:
         query_idxs = list(range(len(mitos[query_ds])))
-        nt = n_targets if n_targets is not None else len(data[target_ds]['images'])
+        nt = cfg.task3.n_targets if cfg.task3.n_targets else len(data[target_ds]['images'])
         print(f"\n=== q={query_ds} t={target_ds} ({len(query_idxs)} queries, {nt} targets) ===")
-        raw_stack, sim_stack = task3(
-            w=None, query_ds=query_ds, target_ds=target_ds,
+        raw_stack, sim_stack = _retrieval(
+            model, query_ds=query_ds, target_ds=target_ds,
             query_idxs=query_idxs, n_targets=nt,
-            dense_stride=dense_stride, downsample_factor=downsample_factor,
+            downsample_factor=g.downsample_factor, dense_stride=g.stride,
+            model_name=g.model,
         )
 
         # Tile raw and sim grids
@@ -816,30 +773,29 @@ def task3_all(dense_stride=8, downsample_factor=2, n_targets=None, out_dir='figu
         print(f"  Saved {sim_path}")
         print(f"  Saved {gif_path}")
 
-def task5(downsample_factor=2, dense_stride=4, subtract_pos=True, figures_dir='figures'):
+def task4(cfg):
     """Compare all available models on one image from each dataset.
     Saves a PCA RGB PNG for each (model, dataset) pair."""
     import matplotlib.pyplot as plt
-    os.makedirs(figures_dir, exist_ok=True)
+    g = cfg.general
+    os.makedirs(g.figures_dir, exist_ok=True)
 
     data = load_datasets()
 
-    # Find which models have weights on disk
     available = {k: v for k, v in DINO_MODELS.items() if os.path.exists(v['weights'])}
     print(f"Available models: {list(available.keys())}")
 
     for model_name in available:
         print(f"\n=== Loading {model_name} ===")
-        os.environ['DINO_MODEL'] = model_name
         model = load_dino(model_name)
 
         for dname in ['liver', 'kidney']:
             img = data[dname]['images'][0]
-            x_crop = prep_image(img, downsample_factor)
+            x_crop = prep_image(img, g.downsample_factor)
             H, W = x_crop.shape
 
             print(f"  {dname}: inference...")
-            token_grid = get_embeddings(model, x_crop, dense_stride=dense_stride, subtract_pos=subtract_pos)
+            token_grid = get_embeddings(model, x_crop, dense_stride=g.stride, subtract_pos=g.subtract_pos, model_name=model_name)
             pH, pW = token_grid.shape[:2]
             tokens = token_grid.reshape(-1, token_grid.shape[2])
 
@@ -863,7 +819,7 @@ def task5(downsample_factor=2, dense_stride=4, subtract_pos=True, figures_dir='f
             axes[1].imshow(pca_img)
             axes[1].set_title(f'{model_name} PCA')
             axes[1].axis('off')
-            path = os.path.join(figures_dir, f'task5_{model_name}_{dname}.png')
+            path = os.path.join(g.figures_dir, f'task4_{model_name}_{dname}.png')
             fig.savefig(path, bbox_inches='tight', dpi=150)
             plt.close(fig)
             print(f"  Saved {path}")
@@ -884,11 +840,11 @@ if __name__ == '__main__':
     gpu_name, gpu_mem = detect_gpu()
     if gpu_name and gpu_mem >= 40:
         print(f"Detected large GPU: {gpu_name} ({gpu_mem:.0f} GB)")
-        cfg['general']['headless'] = True
+        cfg.general.headless = True
         if os.path.exists(DINO_MODELS['vitl16']['weights']):
-            cfg['general']['model'] = 'vitl16'
+            cfg.general.model = 'vitl16'
             print("Auto-selecting vitl16 model")
 
-    print(f"Config: model={cfg['general']['model']}, stride={cfg['general']['stride']}, "
-          f"downsample={cfg['general']['downsample_factor']}, headless={cfg['general']['headless']}")
+    g = cfg.general
+    print(f"Config: model={g.model}, stride={g.stride}, downsample={g.downsample_factor}, headless={g.headless}")
     run_everything(cfg)
