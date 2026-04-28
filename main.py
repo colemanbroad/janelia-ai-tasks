@@ -835,16 +835,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     cfg = load_config(args.config)
-
-    # Auto-detect: if big GPU available, default to headless with large model
-    gpu_name, gpu_mem = detect_gpu()
-    if gpu_name and gpu_mem >= 40:
-        print(f"Detected large GPU: {gpu_name} ({gpu_mem:.0f} GB)")
-        cfg.general.headless = True
-        if os.path.exists(DINO_MODELS['vitl16']['weights']):
-            cfg.general.model = 'vitl16'
-            print("Auto-selecting vitl16 model")
-
-    g = cfg.general
-    print(f"Config: model={g.model}, stride={g.stride}, downsample={g.downsample_factor}, headless={g.headless}")
+    print(cfg)
     run_everything(cfg)
