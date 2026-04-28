@@ -228,8 +228,9 @@ def detect_gpu():
 def load_dino(model_name='vits16'):
     dinodir = "./../dinov3/"
     info = DINO_MODELS[model_name]
-    torch.hub.set_dir(os.path.join(os.getcwd(), 'dinoweights'))  # avoid duplicating weights to ~/.cache
-    model = torch.hub.load(dinodir, info['hub_name'], source='local', weights=info['weights'])
+    model = torch.hub.load(dinodir, info['hub_name'], source='local', pretrained=False)
+    state_dict = torch.load(info['weights'], map_location='cpu', weights_only=True)
+    model.load_state_dict(state_dict, strict=True)
     model.eval()
     gpu_name, gpu_mem = detect_gpu()
     if gpu_name:
