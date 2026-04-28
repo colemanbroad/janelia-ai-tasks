@@ -298,16 +298,29 @@ def load_dino(model_name='vits16'):
     print(f"  Model loaded in {time.time() - t0:.1f}s")
     return model
 
-def run_dino(model, x_np):
-    """Run DINO on a 2D grayscale numpy array. H and W must be divisible by 16."""
-    x = x_np.astype(np.float32)
-    mu = x_np.mean()
-    std = x_np.std()
-    x = (x - mu) / std 
-    x = x * 0.229 + 0.485
-    x = x_np.astype(np.float32)
+_dataset_stats = {}  # cached per-dataset mean/std
 
-    x_3ch = np.stack([x] * 3)  # (3, H, W)
+def _compute_dataset_stats():
+    """Compute mean and std across all images in each dataset. Cached."""
+    if _dataset_stats:
+        return _dataset_stats
+    data = load_datasets()
+    for dname in data:
+        all_pixels = np.concatenate([img.ravel().astype(np.float64) for img in data[dname]['images']])
+        _dataset_stats[dname] = (float(all_pixels.mean()), float(all_pixels.std()))
+        print(f"  {dname} stats: mean={_dataset_stats[dname][0]:.1f}, std={_dataset_stats[dname][1]:.1f}")
+    return _dataset_stats
+
+def _normalize_gray_to_3ch(x_np, dataset='liver'):
+    """Convert grayscale (H,W) to zero-mean unit-variance (3,H,W) float32 using dataset stats."""
+    stats = _compute_dataset_stats()
+    mean, std = stats[dataset]
+    x = (x_np.astype(np.float32) - mean) / (std + 1e-8)
+    return np.stack([x] * 3)  # (3, H, W)
+
+def run_dino(model, x_np, dataset='liver'):
+    """Run DINO on a 2D grayscale numpy array. H and W must be divisible by 16."""
+    x_3ch = _normalize_gray_to_3ch(x_np, dataset)
     device = next(model.parameters()).device
     x_tensor = torch.from_numpy(x_3ch).unsqueeze(0).to(device)  # (1, 3, H, W)
 
@@ -330,9 +343,9 @@ def _detect_model_stride(model):
     model_stride = test_size // grid_side
     return model_stride
 
-def _run_dense_passes(model, x_2d, dense_stride, model_stride):
-    """Run translated passes on a pre-normalized 2D array. Returns (pH, pW, D) accumulator."""
-    H, W = x_2d.shape
+def _run_dense_passes(model, x_3ch, dense_stride, model_stride):
+    """Run translated passes on a pre-normalized (3,H,W) array. Returns (pH, pW, D) accumulator."""
+    _, H, W = x_3ch.shape
     pH = (H - model_stride) // dense_stride + 1
     pW = (W - model_stride) // dense_stride + 1
 
@@ -342,17 +355,16 @@ def _run_dense_passes(model, x_2d, dense_stride, model_stride):
 
     for dy in range(0, model_stride, dense_stride):
         for dx in range(0, model_stride, dense_stride):
-            x_shift = x_2d[dy:, dx:]
-            h_s, w_s = x_shift.shape
+            x_shift = x_3ch[:, dy:, dx:]
+            _, h_s, w_s = x_shift.shape
             h_s = (h_s // model_stride) * model_stride
             w_s = (w_s // model_stride) * model_stride
             if h_s < model_stride or w_s < model_stride:
                 continue
-            x_crop = x_shift[:h_s, :w_s]
+            x_crop = x_shift[:, :h_s, :w_s]
 
-            x_3ch = np.stack([x_crop] * 3)
             device = next(model.parameters()).device
-            x_tensor = torch.from_numpy(x_3ch).unsqueeze(0).to(device)
+            x_tensor = torch.from_numpy(x_crop).unsqueeze(0).to(device)
 
             with torch.no_grad():
                 y = model.forward_features(x_tensor)
@@ -380,7 +392,7 @@ def _run_dense_passes(model, x_2d, dense_stride, model_stride):
     accum /= np.maximum(counts, 1)
     return accum.astype(np.float32)
 
-def run_dino_dense(model, x_np, dense_stride=4, subtract_pos=True):
+def run_dino_dense(model, x_np, dense_stride=4, subtract_pos=True, dataset='liver'):
     """Dense DINO embeddings via translated passes at the model's native stride.
     If subtract_pos, subtracts a positional baseline computed from a constant image.
     Returns (pH, pW, embed_dim) numpy array at effective stride=dense_stride."""
@@ -389,11 +401,7 @@ def run_dino_dense(model, x_np, dense_stride=4, subtract_pos=True):
 
     H, W = x_np.shape
 
-    # Prepare input normalization
-    x = x_np.astype(np.float32)
-    mu, std = x.mean(), x.std() + 1e-8
-    x = (x - mu) / std
-    x = x * 0.229 + 0.485
+    x = _normalize_gray_to_3ch(x_np, dataset)  # (3, H, W)
 
     n_offsets = model_stride // dense_stride
     t0 = time.time()
@@ -401,7 +409,7 @@ def run_dino_dense(model, x_np, dense_stride=4, subtract_pos=True):
     accum = _run_dense_passes(model, x, dense_stride, model_stride)
 
     if subtract_pos:
-        x_const = np.full_like(x, 0.485)  # ImageNet mean
+        x_const = np.zeros_like(x)  # zero after normalization = dataset mean
         baseline = _run_dense_passes(model, x_const, dense_stride, model_stride)
         accum = accum - baseline
         print(f"  Subtracted positional baseline")
@@ -412,23 +420,17 @@ def run_dino_dense(model, x_np, dense_stride=4, subtract_pos=True):
     return accum
 
 
-def run_convnext_dense(model, x_np):
+def run_convnext_dense(model, x_np, dataset='liver'):
     """Single-pass dense embeddings for ConvNeXt models.
     Returns (pH, pW, embed_dim) numpy array."""
     model_stride = _detect_model_stride(model)
     H, W = x_np.shape
 
-    x = x_np.astype(np.float32)
-    mu, std = x.mean(), x.std() + 1e-8
-    x = (x - mu) / std
-    x = x * 0.229 + 0.485
-
     # Crop to model stride
     H = (H // model_stride) * model_stride
     W = (W // model_stride) * model_stride
-    x = x[:H, :W]
 
-    x_3ch = np.stack([x] * 3)
+    x_3ch = _normalize_gray_to_3ch(x_np[:H, :W], dataset)
     device = next(model.parameters()).device
     x_tensor = torch.from_numpy(x_3ch).unsqueeze(0).to(device)
 
@@ -445,16 +447,17 @@ def run_convnext_dense(model, x_np):
     print(f"ConvNeXt inference: {dt:.1f}s for input ({H},{W}) -> {token_grid.shape}")
     return token_grid
 
-def get_embeddings(model, x_np, dense_stride=4, subtract_pos=True, model_name='vits16'):
+def get_embeddings(model, x_np, dense_stride=4, subtract_pos=True, model_name='vits16', dataset='liver'):
     """Get dense embeddings. Uses translated passes for ViT, single pass for ConvNeXt."""
     if model_name.startswith('convnext'):
-        return run_convnext_dense(model, x_np)
+        return run_convnext_dense(model, x_np, dataset=dataset)
     else:
-        return run_dino_dense(model, x_np, dense_stride=dense_stride, subtract_pos=subtract_pos)
+        return run_dino_dense(model, x_np, dense_stride=dense_stride, subtract_pos=subtract_pos, dataset=dataset)
 
 def prep_image(img, downsample_factor=1):
     """Downscale and crop to patch-aligned (multiple of 16) dimensions."""
     img = img.astype(np.float32)
+    ## FIX: what about downsample_factor < 1 ?
     if downsample_factor > 1:
         new_h, new_w = img.shape[0] // downsample_factor, img.shape[1] // downsample_factor
         img = resize(img, (new_h, new_w), anti_aliasing=True, preserve_range=True).astype(np.float32)
@@ -550,7 +553,7 @@ def task2(cfg):
         for i, x_crop in enumerate(crops):
             print(f"{dname} [{i}] inference...")
             if t2.dense:
-                token_grid = get_embeddings(model, x_crop, dense_stride=g.stride, subtract_pos=g.subtract_pos, model_name=g.model)
+                token_grid = get_embeddings(model, x_crop, dense_stride=g.stride, subtract_pos=g.subtract_pos, model_name=g.model, dataset=dname)
                 pH_i, pW_i = token_grid.shape[:2]
                 tokens = token_grid.reshape(-1, token_grid.shape[2])
             else:
@@ -686,7 +689,7 @@ def _retrieval(model, query_ds, target_ds, n_targets, downsample_factor=2, dense
         x_crop = prep_image(data[query_ds]['images'][i], downsample_factor)
 
         print(f"Query {query_ds}[{i}]: computing embeddings...")
-        token_grid = get_embeddings(model, x_crop, dense_stride=dense_stride, model_name=model_name)
+        token_grid = get_embeddings(model, x_crop, dense_stride=dense_stride, model_name=model_name, dataset=query_ds)
         qy, qx = mito_yx[0] // downsample_factor, mito_yx[1] // downsample_factor
         pH, pW = token_grid.shape[:2]
         qi = min(qy // dense_stride, pH - 1)
@@ -705,7 +708,7 @@ def _retrieval(model, query_ds, target_ds, n_targets, downsample_factor=2, dense
         x_crop = prep_image(img, downsample_factor)
 
         print(f"Target {target_ds}[{i}]: computing embeddings...")
-        token_grid = get_embeddings(model, x_crop, dense_stride=dense_stride, model_name=model_name)
+        token_grid = get_embeddings(model, x_crop, dense_stride=dense_stride, model_name=model_name, dataset=target_ds)
         pH, pW, D = token_grid.shape
 
         tokens_flat = torch.from_numpy(token_grid.reshape(-1, D))
@@ -812,7 +815,7 @@ def task4(cfg):
             H, W = x_crop.shape
 
             print(f"  {dname}: inference...")
-            token_grid = get_embeddings(model, x_crop, dense_stride=g.stride, subtract_pos=g.subtract_pos, model_name=model_name)
+            token_grid = get_embeddings(model, x_crop, dense_stride=g.stride, subtract_pos=g.subtract_pos, model_name=model_name, dataset=dname)
             pH, pW = token_grid.shape[:2]
             tokens = token_grid.reshape(-1, token_grid.shape[2])
 
