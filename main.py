@@ -538,6 +538,30 @@ def load_datasets():
         print(f"{dname}: loaded {len(images)} images, shape={images[0].shape}")
     return result
 
+def compute_pos_baseline(model, dname, cfg):
+    """Compute per-pixel mean embedding across all images in a dataset. Cached to disk."""
+    g = cfg.general
+    cache_path = os.path.join(CACHE_DIR, f'pos_baseline_{dname}_{g.model}_s{g.stride}_d{g.downsample_factor}.npy')
+    if os.path.exists(cache_path):
+        print(f"  Loading positional baseline from {cache_path}")
+        return np.load(cache_path)
+
+    data = load_datasets()
+    images = data[dname]['images']
+    crops = [prep_image(img, g.downsample_factor) for img in images]
+
+    print(f"  Computing positional baseline for {dname} ({len(crops)} images)...")
+    all_grids = []
+    for i, x_crop in enumerate(crops):
+        print(f"    {dname} [{i}/{len(crops)}]...")
+        token_grid = get_embeddings(model, x_crop, dense_stride=g.stride, subtract_pos=False, model_name=g.model, dataset=dname)
+        all_grids.append(token_grid)
+
+    pixel_mean = np.stack(all_grids).mean(axis=0)  # (pH, pW, D)
+    np.save(cache_path, pixel_mean)
+    print(f"  Saved positional baseline to {cache_path}")
+    return pixel_mean
+
 def task2(cfg):
     """Run DINO on images, per-image mean subtraction, joint PCA."""
 
@@ -552,19 +576,22 @@ def task2(cfg):
         crops = [prep_image(img, g.downsample_factor) for img in images]
         H, W = crops[0].shape
 
-        all_tokens = []
-        grid_shapes = []
+        all_grids = []
         for i, x_crop in enumerate(crops):
             print(f"{dname} [{i}] inference...")
             token_grid = get_embeddings(model, x_crop, dense_stride=g.stride, subtract_pos=g.subtract_pos, model_name=g.model, dataset=dname)
-            pH_i, pW_i = token_grid.shape[:2]
-            tokens = token_grid.reshape(-1, token_grid.shape[2])
-            all_tokens.append(tokens)
-            grid_shapes.append((pH_i, pW_i))
+            all_grids.append(token_grid)
 
-        # Per-image mean subtraction, then joint PCA
-        # for i in range(len(all_tokens)):
-        #     all_tokens[i] = all_tokens[i] - all_tokens[i].mean(axis=0, keepdims=True)
+        pH, pW, D = all_grids[0].shape
+
+        # Subtract per-pixel mean across full dataset to remove positional bias
+        if getattr(g, 'subtract_pos_empirical', False):
+            pixel_mean = compute_pos_baseline(model, dname, cfg)
+            all_grids = [grid - pixel_mean for grid in all_grids]
+            print(f"  Subtracted empirical positional baseline")
+
+        all_tokens = [grid.reshape(-1, D) for grid in all_grids]
+        grid_shapes = [(pH, pW)] * len(all_grids)
 
         all_tokens_cat = np.concatenate(all_tokens, axis=0)
         pca = PCA(n_components=3)
@@ -687,11 +714,18 @@ def run_everything(cfg=None):
     if 4 in tasks: task4(cfg)
 
 
-def _retrieval(model, query_ds, target_ds, n_targets, downsample_factor=2, dense_stride=2, model_name='vits16', subtract_pos=True):
+def _retrieval(model, cfg, query_ds, target_ds, n_targets, downsample_factor=2, dense_stride=2, model_name='vits16', subtract_pos=True):
     """Embedding-based retrieval helper. Returns (raw_stack, sim_stack)."""
+    g = cfg.general
     data = load_datasets()
     mitos = mitolocations()
     query_points = mitos[query_ds]
+
+    # Precompute empirical positional baselines
+    pos_baselines = {}
+    if getattr(g, 'subtract_pos_empirical', False):
+        for ds in set([query_ds, target_ds]):
+            pos_baselines[ds] = compute_pos_baseline(model, ds, cfg)
 
     query_embs = []
     for i, mito_yx in enumerate(query_points):
@@ -700,10 +734,12 @@ def _retrieval(model, query_ds, target_ds, n_targets, downsample_factor=2, dense
         print(f"Query {query_ds}[{i}]: computing embeddings...")
         token_grid = get_embeddings(model, x_crop, dense_stride=dense_stride, subtract_pos=subtract_pos, model_name=model_name, dataset=query_ds)
 
-        # Per-image mean subtraction
-        tokens = token_grid.reshape(-1, token_grid.shape[2])
-        tokens = tokens - tokens.mean(axis=0, keepdims=True)
-        token_grid = tokens.reshape(token_grid.shape)
+        if query_ds in pos_baselines:
+            token_grid = token_grid - pos_baselines[query_ds]
+        else:
+            tokens = token_grid.reshape(-1, token_grid.shape[2])
+            tokens = tokens - tokens.mean(axis=0, keepdims=True)
+            token_grid = tokens.reshape(token_grid.shape)
 
         # Scale mito x,y coords to match image scale
         qy, qx = mito_yx[0] // downsample_factor, mito_yx[1] // downsample_factor
@@ -727,10 +763,14 @@ def _retrieval(model, query_ds, target_ds, n_targets, downsample_factor=2, dense
         token_grid = get_embeddings(model, x_crop, dense_stride=dense_stride, subtract_pos=subtract_pos, model_name=model_name, dataset=target_ds)
         pH, pW, D = token_grid.shape
 
-        # Per-image mean subtraction
-        tokens_flat = token_grid.reshape(-1, D)
-        tokens_flat = tokens_flat - tokens_flat.mean(axis=0, keepdims=True)
-        tokens_flat = torch.from_numpy(tokens_flat)
+        if target_ds in pos_baselines:
+            token_grid = token_grid - pos_baselines[target_ds]
+        else:
+            tokens = token_grid.reshape(-1, D)
+            tokens = tokens - tokens.mean(axis=0, keepdims=True)
+            token_grid = tokens.reshape(token_grid.shape)
+
+        tokens_flat = torch.from_numpy(token_grid.reshape(-1, D))
         tokens_normed = torch.nn.functional.normalize(tokens_flat, dim=-1)
 
         # Compute cosine similarity for each query, then average
@@ -795,7 +835,7 @@ def task3(cfg):
         n_queries = len(mitos[query_ds])
         print(f"\n=== q={query_ds} t={target_ds} ({n_queries} queries, {nt} targets) ===")
         raw_stack, sim_stack = _retrieval(
-            model, query_ds=query_ds, target_ds=target_ds, n_targets=nt,
+            model, cfg, query_ds=query_ds, target_ds=target_ds, n_targets=nt,
             downsample_factor=g.downsample_factor, dense_stride=g.stride,
             model_name=g.model, subtract_pos=g.subtract_pos,
         )
