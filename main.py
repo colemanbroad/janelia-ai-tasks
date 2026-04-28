@@ -1,13 +1,27 @@
 import os
-import zarr
+import sys
 import time
-import matplotlib
-matplotlib.use('Agg')  # headless-safe backend, must be before pyplot import
-import dask.array as da # we import dask to help us manage parallel access to the big dataset
+import argparse
+from types import SimpleNamespace
+
 import numpy as np
 import torch
+import zarr
+import s3fs
+import dask.array as da
 from dask.diagnostics import ProgressBar
 from sklearn.decomposition import PCA
+from skimage.transform import resize
+from PIL import Image
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 CACHE_DIR = 'cache'
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -74,7 +88,6 @@ def load_remote(ds, subpath, slc, fmt='n5', size_only=False, refresh_cache=False
         path = f's3://janelia-cosem-datasets/{ds}/{ds}.n5'
         group = zarr.open(zarr.N5FSStore(path, anon=True))
     elif fmt == 'zarr':
-        import s3fs
         fs = s3fs.S3FileSystem(anon=True)
         path = f's3://janelia-cosem-datasets/{ds}/{ds}.zarr'
         group = zarr.open(zarr.storage.FSStore(path, fs=fs, mode='r'))
@@ -164,7 +177,7 @@ DINO_MODELS = {
         'hub_name': 'dinov3_vitb16',
         'weights': 'dinoweights/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth',
     },
-    'vitl16_lvd': {
+    'vitl16': {
         'hub_name': 'dinov3_vitl16',
         'weights': 'dinoweights/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth',
     },
@@ -177,7 +190,7 @@ DINO_MODELS = {
         'weights': 'dinoweights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth',
     },
     # ViT SAT-493M
-    'vitl16': {
+    'vitl16_sat': {
         'hub_name': 'dinov3_vitl16',
         'weights': 'dinoweights/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth',
     },
@@ -380,7 +393,6 @@ def get_embeddings(model, x_np, dense_stride=4, subtract_pos=True, model_name='v
 
 def prep_image(img, downsample_factor=1):
     """Downscale and crop to patch-aligned (multiple of 16) dimensions."""
-    from skimage.transform import resize
     img = img.astype(np.float32)
     if downsample_factor > 1:
         new_h, new_w = img.shape[0] // downsample_factor, img.shape[1] // downsample_factor
@@ -404,7 +416,6 @@ def task1(cfg, n_samples=20, crop_size=1024):
     }
 
     for dname, info in datasets.items():
-        import s3fs
         fs = s3fs.S3FileSystem(anon=True)
         path = f's3://janelia-cosem-datasets/{info["ds"]}/{info["ds"]}.zarr'
         group = zarr.open(zarr.storage.FSStore(path, fs=fs, mode='r'))
@@ -456,15 +467,9 @@ def load_datasets():
         print(f"{dname}: loaded {len(images)} images, shape={images[0].shape}")
     return result
 
-def show_datasets(w):
-    data = load_datasets()
-    for dname in ['liver', 'kidney']:
-        stack = np.stack(data[dname]['images'])  # (N, H, W)
-        w.add_image(stack, name=dname)
+def task2(cfg):
+    """Run DINO on images, per-image mean subtraction, joint PCA."""
 
-def task2(cfg, w=None):
-    """Run DINO on images, per-image mean subtraction, joint PCA, scrollable in napari."""
-    import matplotlib.pyplot as plt
     g = cfg.general
     t2 = cfg.task2
     patch_size = 16
@@ -530,20 +535,18 @@ def task2(cfg, w=None):
         raw_stack = np.stack(raw_stack)
         pca_stack = np.stack(pca_stack)
 
-        label = f'{dname} {"dense" if t2.dense else "stride"}{g.stride} {g.downsample_factor}x'
-        if w is not None:
-            w.add_image(raw_stack, name=f'{label} raw')
-            w.add_image(pca_stack, name=f'{label} PCA', rgb=True)
-
         os.makedirs(g.figures_dir, exist_ok=True)
+
+        # Save raw tiled grid
+        raw_grid = _tile_grid(list(raw_stack))
+        raw_path = os.path.join(g.figures_dir, f'task2_raw_{dname}.png')
+        Image.fromarray(raw_grid.astype(np.uint8)).save(raw_path)
+        print(f"  Saved {raw_path}")
+
+        # Save PCA tiled grid
         pca_grid = _tile_grid(list(pca_stack))
-        fig, ax = plt.subplots(1, 1, figsize=(12, 12))
-        ax.imshow(pca_grid)
-        ax.set_title(f'PCA: {dname}')
-        ax.axis('off')
         pca_path = os.path.join(g.figures_dir, f'task2_pca_{dname}.png')
-        fig.savefig(pca_path, bbox_inches='tight', dpi=150)
-        plt.close(fig)
+        Image.fromarray((pca_grid * 255).astype(np.uint8)).save(pca_path)
         print(f"  Saved {pca_path}")
 
         
@@ -567,12 +570,6 @@ def mitolocations():
     return {'kidney':kidney, 'liver':liver}
 
 
-import sys
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
-
 def _deep_merge(base, override):
     """Merge override dict into base dict, recursing into sub-dicts."""
     merged = dict(base)
@@ -585,7 +582,6 @@ def _deep_merge(base, override):
 
 def _dict_to_ns(d):
     """Recursively convert a dict to nested SimpleNamespace."""
-    from types import SimpleNamespace
     ns = SimpleNamespace()
     for k, v in d.items():
         if isinstance(v, dict):
@@ -614,20 +610,10 @@ def run_everything(cfg=None):
     np.random.seed(g.seed)
     torch.manual_seed(g.seed)
 
-    if g.headless:
-        w = None
-    else:
-        try:
-            import napari
-            w = napari.viewer.Viewer()
-        except ImportError:
-            print("napari not installed, running without viewer")
-            w = None
-
     print(f"Running tasks: {tasks}")
 
     if 1 in tasks: task1(cfg)
-    if 2 in tasks: task2(cfg, w)
+    if 2 in tasks: task2(cfg)
     if 3 in tasks: task3(cfg)
     if 4 in tasks: task4(cfg)
 
@@ -707,7 +693,7 @@ def _tile_grid(images, ncols=None):
 
 def task3(cfg):
     """Run retrieval for all 4 query/target combinations and save tiled grids as PNGs."""
-    import matplotlib.pyplot as plt
+
     g = cfg.general
     out_dir = g.figures_dir
     os.makedirs(out_dir, exist_ok=True)
@@ -762,12 +748,10 @@ def task3(cfg):
         plt.close(fig)
 
         # Combine raw and sim into an oscillating GIF
-        from PIL import Image
         raw_pil = Image.open(raw_path)
         sim_pil = Image.open(sim_path)
         gif_path = os.path.join(out_dir, f'task3_q{query_ds}_t{target_ds}.gif')
-        raw_pil.save(gif_path, save_all=True, append_images=[sim_pil],
-                     duration=1000, loop=0)
+        raw_pil.save(gif_path, save_all=True, append_images=[sim_pil], duration=1000, loop=0)
 
         print(f"  Saved {raw_path}")
         print(f"  Saved {sim_path}")
@@ -776,7 +760,7 @@ def task3(cfg):
 def task4(cfg):
     """Compare all available models on one image from each dataset.
     Saves a PCA RGB PNG for each (model, dataset) pair."""
-    import matplotlib.pyplot as plt
+
     g = cfg.general
     os.makedirs(g.figures_dir, exist_ok=True)
 
@@ -829,7 +813,6 @@ def task4(cfg):
         torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
 if __name__ == '__main__':
-    import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', default='config.toml', help='Path to config file')
     args = parser.parse_args()

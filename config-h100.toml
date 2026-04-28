@@ -1,5 +1,4 @@
 [general]
-headless = true
-stride=1
+stride = 1
 subtract_pos = false
-tasks = [5]
+tasks = [4]
