@@ -298,10 +298,7 @@ def load_dino(model_name='vits16'):
     print(f"  Model loaded in {time.time() - t0:.1f}s")
     return model
 
-_dataset_stats = {
-  'liver' : [125.5, 34.5],
-  'kidney' : [124.2, 36.5],
-}
+_dataset_stats = {}  # computed on first call to _compute_dataset_stats()
 
 def _compute_dataset_stats():
     """Compute mean and std across all images in each dataset. Cached."""
@@ -511,6 +508,10 @@ def task1(cfg, n_samples=20, crop_size=1024):
 
         print(f"{dname}: {n_samples} crops saved to {out_dir}")
 
+SKIP_IMAGES = {
+    'kidney': [4],  # image 4 has a large black region
+}
+
 def load_datasets():
     """Load all task1 crops into a dict keyed by dataset name.
     Returns {'liver': {'images': [np arrays], 'coords': [(z,y,x), ...]},
@@ -520,10 +521,13 @@ def load_datasets():
         out_dir = os.path.join(CACHE_DIR, f'task1_{dname}')
         assert os.path.isdir(out_dir), f"No data found at {out_dir}. Run task1() first."
         files = sorted([f for f in os.listdir(out_dir) if f.endswith('.npy')])
+        skip = SKIP_IMAGES.get(dname, [])
         images = []
-        coords = [] ## TODO: don't extract coords from file name. save it as data properly on download and reload it here. Or skip entirely because never used.
-        for f in files:
-            # Parse coords from filename: 00_z123_y456_x789.npy
+        coords = []
+        for idx, f in enumerate(files):
+            if idx in skip:
+                print(f"  Skipping {dname}[{idx}]: {f}")
+                continue
             parts = f.replace('.npy', '').split('_')
             z = int(parts[1][1:])
             y = int(parts[2][1:])

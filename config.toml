@@ -3,7 +3,7 @@
 model = "vitb16"
 stride = 4
 downsample_factor = 2
-subtract_pos = true
+subtract_pos = false
 seed = 42
 figures_dir = "figures"
 tasks = [2,] # 1=download, 2=PCA, 3=retrieval+figures, 4=model comparison
