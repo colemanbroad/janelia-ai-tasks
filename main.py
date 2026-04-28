@@ -15,16 +15,67 @@ from sklearn.decomposition import PCA
 from skimage.transform import resize
 from PIL import Image
 
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-
 if sys.version_info >= (3, 11):
     import tomllib
 else:
     import tomli as tomllib
 
 print(f"Imports done in {time.time() - _t_start:.1f}s")
+
+# Inferno colormap LUT (256 entries, RGB uint8) — avoids matplotlib dependency
+_INFERNO_LUT = np.array([
+    [0,0,4],[1,0,5],[1,1,6],[1,1,8],[2,1,10],[2,2,12],[2,2,14],[3,2,16],
+    [4,3,18],[4,3,20],[5,4,23],[6,4,25],[7,5,27],[8,5,29],[9,6,31],[10,7,34],
+    [11,7,36],[12,8,38],[13,8,41],[14,9,43],[16,9,45],[17,10,48],[18,10,50],
+    [20,11,52],[21,11,55],[22,11,57],[24,12,60],[25,12,62],[27,12,65],[28,12,67],
+    [30,12,69],[31,12,72],[33,12,74],[35,12,76],[36,12,79],[38,12,81],[40,11,83],
+    [41,11,85],[43,11,87],[45,11,89],[47,10,91],[49,10,92],[50,10,94],[52,10,95],
+    [54,9,97],[56,9,98],[57,9,99],[59,9,100],[61,9,101],[62,9,102],[64,10,103],
+    [66,10,104],[68,10,104],[69,10,105],[71,11,106],[73,11,106],[74,12,107],
+    [76,12,107],[77,13,108],[79,13,108],[81,14,108],[82,14,109],[84,15,109],
+    [85,15,109],[87,16,110],[89,16,110],[90,17,110],[92,18,110],[93,18,110],
+    [95,19,110],[97,19,110],[98,20,110],[100,21,110],[101,21,110],[103,22,110],
+    [105,22,110],[106,23,110],[108,24,110],[109,24,110],[111,25,110],[113,25,110],
+    [114,26,110],[116,26,110],[117,27,110],[119,28,109],[120,28,109],[122,29,109],
+    [124,29,109],[125,30,109],[127,30,108],[128,31,108],[130,32,108],[132,32,107],
+    [133,33,107],[135,33,107],[136,34,106],[138,34,106],[140,35,105],[141,35,105],
+    [143,36,105],[144,37,104],[146,37,104],[148,38,103],[149,38,103],[151,39,102],
+    [152,39,102],[154,40,101],[156,40,100],[157,41,100],[159,41,99],[160,42,99],
+    [162,42,98],[164,43,97],[165,44,96],[167,44,96],[168,45,95],[170,45,94],
+    [172,46,93],[173,46,93],[175,47,92],[176,48,91],[178,48,90],[179,49,89],
+    [181,49,88],[182,50,88],[184,51,87],[185,51,86],[187,52,85],[188,53,84],
+    [190,53,83],[191,54,82],[193,55,81],[194,55,80],[196,56,79],[197,57,78],
+    [198,58,77],[200,58,76],[201,59,75],[203,60,74],[204,61,73],[205,62,72],
+    [207,62,71],[208,63,70],[209,64,69],[211,65,68],[212,66,67],[213,67,66],
+    [214,68,65],[216,69,63],[217,70,62],[218,71,61],[219,72,60],[220,73,59],
+    [221,74,58],[222,75,56],[224,76,55],[225,77,54],[226,78,53],[227,79,52],
+    [228,81,51],[229,82,49],[230,83,48],[231,84,47],[232,85,46],[232,87,44],
+    [233,88,43],[234,89,42],[235,90,41],[236,92,39],[236,93,38],[237,94,37],
+    [238,96,36],[238,97,34],[239,98,33],[240,100,32],[240,101,31],[241,103,29],
+    [241,104,28],[242,105,27],[242,107,25],[243,108,24],[243,110,23],[243,111,22],
+    [244,113,20],[244,114,19],[244,116,18],[245,117,17],[245,119,15],[245,120,14],
+    [245,122,13],[246,123,12],[246,125,11],[246,126,10],[246,128,9],[247,130,8],
+    [247,131,7],[247,133,6],[247,134,5],[247,136,5],[247,137,4],[248,139,4],
+    [248,141,3],[248,142,3],[248,144,3],[248,145,3],[248,147,3],[248,148,3],
+    [249,150,3],[249,151,4],[249,153,4],[249,154,5],[249,156,6],[249,157,7],
+    [249,159,8],[249,160,9],[249,162,10],[249,163,12],[249,165,13],[249,166,15],
+    [249,168,16],[249,169,18],[249,171,20],[249,172,21],[249,174,23],[249,175,25],
+    [249,177,27],[249,178,29],[248,180,31],[248,181,33],[248,183,35],[248,184,37],
+    [248,186,39],[247,187,41],[247,189,43],[247,190,46],[247,192,48],[246,193,50],
+    [246,195,52],[246,196,55],[245,198,57],[245,199,59],[245,201,62],[244,202,64],
+    [244,204,66],[244,205,69],[243,207,71],[243,208,74],[243,210,76],[242,211,79],
+    [242,213,81],[242,214,84],[241,216,87],[241,217,89],[241,219,92],[240,220,95],
+    [240,222,97],[240,223,100],[239,225,103],[239,226,106],[239,228,108],
+    [239,229,111],[238,231,114],[238,232,117],[238,234,120],[238,235,123],
+    [237,237,126],[237,238,129],[237,240,132],[237,241,135],[237,243,138],
+    [236,244,141],[236,246,144],[236,247,147],[236,249,150],[237,250,154],
+    [237,252,157],[237,253,160],[238,255,163],
+], dtype=np.uint8)
+
+def _apply_colormap(arr):
+    """Apply inferno colormap to a [0,1] float array. Returns (H, W, 3) uint8."""
+    indices = (np.clip(arr, 0, 1) * 255).astype(np.uint8)
+    return _INFERNO_LUT[indices]
 
 CACHE_DIR = 'cache'
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -547,21 +598,10 @@ def task2(cfg):
 
         os.makedirs(g.figures_dir, exist_ok=True)
 
-        # Save raw tiled grid
         raw_grid = _tile_grid(list(raw_stack))
-        raw_path = os.path.join(g.figures_dir, f'task2_raw_{dname}.png')
-        Image.fromarray(raw_grid.astype(np.uint8)).save(raw_path)
-        print(f"  Saved {raw_path}")
-
-        # Save PCA tiled grid
         pca_grid = _tile_grid(list(pca_stack))
-        pca_path = os.path.join(g.figures_dir, f'task2_pca_{dname}.png')
-        Image.fromarray((pca_grid * 255).astype(np.uint8)).save(pca_path)
-        print(f"  Saved {pca_path}")
-
-        # Save toggling GIF
-        raw_pil = Image.open(raw_path)
-        pca_pil = Image.open(pca_path)
+        raw_pil = Image.fromarray(raw_grid.astype(np.uint8))
+        pca_pil = Image.fromarray((pca_grid * 255).astype(np.uint8))
         gif_path = os.path.join(g.figures_dir, f'task2_{dname}.gif')
         raw_pil.save(gif_path, save_all=True, append_images=[pca_pil], duration=1000, loop=0)
         print(f"  Saved {gif_path}")
@@ -635,17 +675,14 @@ def run_everything(cfg=None):
     if 4 in tasks: task4(cfg)
 
 
-def _retrieval(model, query_ds, target_ds, query_idxs, n_targets, downsample_factor=2, dense_stride=2, model_name='vits16'):
+def _retrieval(model, query_ds, target_ds, n_targets, downsample_factor=2, dense_stride=2, model_name='vits16'):
     """Embedding-based retrieval helper. Returns (raw_stack, sim_stack)."""
     data = load_datasets()
     mitos = mitolocations()
-
-    if query_idxs is None:
-        query_idxs = list(range(len(mitos[query_ds])))
-    query_points = [mitos[query_ds][i] for i in query_idxs]
+    query_points = mitos[query_ds]
 
     query_embs = []
-    for i, mito_yx in zip(query_idxs, query_points):
+    for i, mito_yx in enumerate(query_points):
         x_crop = prep_image(data[query_ds]['images'][i], downsample_factor)
 
         print(f"Query {query_ds}[{i}]: computing embeddings...")
@@ -730,54 +767,27 @@ def task3(cfg):
     ]
 
     for query_ds, target_ds in combos:
-        query_idxs = list(range(len(mitos[query_ds])))[:1]
         nt = cfg.task3.n_targets if cfg.task3.n_targets else len(data[target_ds]['images'])
-        print(f"\n=== q={query_ds} t={target_ds} ({len(query_idxs)} queries, {nt} targets) ===")
+        n_queries = len(mitos[query_ds])
+        print(f"\n=== q={query_ds} t={target_ds} ({n_queries} queries, {nt} targets) ===")
         raw_stack, sim_stack = _retrieval(
-            model, query_ds=query_ds, target_ds=target_ds,
-            query_idxs=query_idxs, n_targets=nt,
+            model, query_ds=query_ds, target_ds=target_ds, n_targets=nt,
             downsample_factor=g.downsample_factor, dense_stride=g.stride,
             model_name=g.model,
         )
 
-        # Tile raw and sim grids
         raw_grid = _tile_grid(list(raw_stack))
         sim_grid = _tile_grid(list(sim_stack))
 
-        # Normalize sim: clamp lower bound, scale to [0,1], apply gamma
-        # lb and gamma determined by visual inspection
+        # Normalize sim to [0,1]
         mi, ma = sim_grid.min(), sim_grid.max()
-        sim_norm = (sim_grid - mi) / (ma - mi)
-        # sim_norm = (sim_grid - 0.533) / (sim_grid.max() - 0.533 + 1e-8)
-        # sim_norm = np.clip(sim_norm, 0, 1)
-        # sim_norm = sim_norm ** (1.0 / 1.8)
+        sim_norm = (sim_grid - mi) / (ma - mi + 1e-8)
 
-        # Save raw grid
-        fig, ax = plt.subplots(1, 1, figsize=(12, 12))
-        ax.imshow(raw_grid, cmap='gray')
-        ax.set_title(f'Raw: query={query_ds}, target={target_ds}')
-        ax.axis('off')
-        raw_path = os.path.join(out_dir, f'task3_raw_q{query_ds}_t{target_ds}.png')
-        fig.savefig(raw_path, bbox_inches='tight', dpi=150)
-        plt.close(fig)
-
-        # Save sim grid
-        fig, ax = plt.subplots(1, 1, figsize=(12, 12))
-        ax.imshow(sim_norm, cmap='inferno')
-        ax.set_title(f'Similarity: query={query_ds}, target={target_ds}')
-        ax.axis('off')
-        sim_path = os.path.join(out_dir, f'task3_sim_q{query_ds}_t{target_ds}.png')
-        fig.savefig(sim_path, bbox_inches='tight', dpi=150)
-        plt.close(fig)
-
-        # Combine raw and sim into an oscillating GIF
-        raw_pil = Image.open(raw_path)
-        sim_pil = Image.open(sim_path)
+        raw_pil = Image.fromarray(raw_grid.astype(np.uint8))
+        sim_pil = Image.fromarray(_apply_colormap(sim_norm))
         gif_path = os.path.join(out_dir, f'task3_q{query_ds}_t{target_ds}.gif')
         raw_pil.save(gif_path, save_all=True, append_images=[sim_pil], duration=1000, loop=0)
-
-        print(f"  Saved {raw_path}")
-        print(f"  Saved {sim_path}")
+        print(f"  Saved {gif_path}")
         print(f"  Saved {gif_path}")
 
 def task4(cfg):
@@ -819,29 +829,21 @@ def task4(cfg):
             pca_img = torch.nn.functional.interpolate(pca_tensor, size=(H, W), mode='bilinear', align_corners=False)
             pca_img = pca_img.squeeze(0).permute(1, 2, 0).numpy()
 
-            fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-            axes[0].imshow(x_crop, cmap='gray')
-            axes[0].set_title(f'{dname} raw')
-            axes[0].axis('off')
-            axes[1].imshow(pca_img)
-            axes[1].set_title(f'{model_name} PCA')
-            axes[1].axis('off')
-            path = os.path.join(g.figures_dir, f'task4_{model_name}_{dname}.png')
-            fig.savefig(path, bbox_inches='tight', dpi=150)
-            plt.close(fig)
-            print(f"  Saved {path}")
+            raw_pil = Image.fromarray(x_crop.astype(np.uint8))
+            pca_pil = Image.fromarray((pca_img * 255).astype(np.uint8))
+            gif_path = os.path.join(g.figures_dir, f'task4_{model_name}_{dname}.gif')
+            raw_pil.save(gif_path, save_all=True, append_images=[pca_pil], duration=1000, loop=0)
+            print(f"  Saved {gif_path}")
 
         # Free GPU memory before loading next model
         del model
         torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
 if __name__ == '__main__':
-    print("inside __main__")
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', default='config.toml', help='Path to config file')
     args = parser.parse_args()
 
-    print("about to load config")
     cfg = load_config(args.config)
     print("config = ", cfg)
     run_everything(cfg)
