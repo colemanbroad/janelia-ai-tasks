@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+_t_start = time.time()
 import argparse
 from types import SimpleNamespace
 
@@ -23,8 +24,11 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
+print(f"Imports done in {time.time() - _t_start:.1f}s")
+
 CACHE_DIR = 'cache'
 os.makedirs(CACHE_DIR, exist_ok=True)
+print("Ensured CACHE dir.")
 
 dataset_names = [
     'jrc_hela-3',
@@ -226,16 +230,21 @@ def detect_gpu():
     return name, mem_gb
 
 def load_dino(model_name='vits16'):
+    print(f"Loading model {model_name}...")
+    t0 = time.time()
     dinodir = "./../dinov3/"
     info = DINO_MODELS[model_name]
     model = torch.hub.load(dinodir, info['hub_name'], source='local', pretrained=False)
     state_dict = torch.load(info['weights'], map_location='cpu', weights_only=True)
-    model.load_state_dict(state_dict, strict=True)
+    result = model.load_state_dict(state_dict, strict=False)
+    if result.unexpected_keys:
+        print(f"  Ignored unexpected keys: {result.unexpected_keys}")
     model.eval()
     gpu_name, gpu_mem = detect_gpu()
     if gpu_name:
-        print(f"GPU: {gpu_name} ({gpu_mem:.0f} GB)")
         model = model.cuda()
+        print(f"  GPU: {gpu_name} ({gpu_mem:.0f} GB)")
+    print(f"  Model loaded in {time.time() - t0:.1f}s")
     return model
 
 def run_dino(model, x_np):
@@ -821,10 +830,12 @@ def task4(cfg):
         torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
 if __name__ == '__main__':
+    print("inside __main__")
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', default='config.toml', help='Path to config file')
     args = parser.parse_args()
 
+    print("about to load config")
     cfg = load_config(args.config)
-    print(cfg)
+    print("config = ", cfg)
     run_everything(cfg)
