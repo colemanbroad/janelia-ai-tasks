@@ -538,8 +538,20 @@ def load_datasets():
         print(f"{dname}: loaded {len(images)} images, shape={images[0].shape}")
     return result
 
+def _augment_image(img):
+    """Generate augmented versions of an image: flips, 90-degree rotations."""
+    augs = [img]
+    augs.append(np.fliplr(img))
+    augs.append(np.flipud(img))
+    augs.append(np.rot90(img, 1))
+    augs.append(np.rot90(img, 2))
+    augs.append(np.rot90(img, 3))
+    augs.append(np.fliplr(np.rot90(img, 1)))
+    augs.append(np.flipud(np.rot90(img, 1)))
+    return augs
+
 def compute_pos_baseline(model, dname, cfg):
-    """Compute per-pixel mean embedding across all images in a dataset. Cached to disk."""
+    """Compute per-pixel mean embedding across all images + augmentations. Cached to disk."""
     g = cfg.general
     cache_path = os.path.join(CACHE_DIR, f'pos_baseline_{dname}_{g.model}_s{g.stride}_d{g.downsample_factor}.npy')
     if os.path.exists(cache_path):
@@ -550,10 +562,15 @@ def compute_pos_baseline(model, dname, cfg):
     images = data[dname]['images']
     crops = [prep_image(img, g.downsample_factor) for img in images]
 
-    print(f"  Computing positional baseline for {dname} ({len(crops)} images)...")
+    # Augment each crop to average out content while preserving positional signal
+    aug_crops = []
+    for crop in crops:
+        aug_crops.extend(_augment_image(crop.copy()))
+    print(f"  Computing positional baseline for {dname} ({len(crops)} images x 8 augmentations = {len(aug_crops)} passes)...")
+
     all_grids = []
-    for i, x_crop in enumerate(crops):
-        print(f"    {dname} [{i}/{len(crops)}]...")
+    for i, x_crop in enumerate(aug_crops):
+        print(f"    {dname} [{i}/{len(aug_crops)}]...")
         token_grid = get_embeddings(model, x_crop, dense_stride=g.stride, subtract_pos=False, model_name=g.model, dataset=dname)
         all_grids.append(token_grid)
 
