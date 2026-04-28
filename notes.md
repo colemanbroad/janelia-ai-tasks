@@ -206,6 +206,13 @@ setup helix
 
 ---
 
+[DONE]
 I keep wanting to change what's run without editing a file. The config system is only OK.
 TODO: edit locally, rsync and run. we want a deployment, not just the repo code. it should include data and cmd to run? jarvis has a cli tool for this (which also offers auto-pause on completion) but i'd rather use something generic.
 This would eliminate the need for helix on the server.
+
+!! There's still a very strong spatial correlation, a consistent pattern that shows up in Task 3's
+retrieval results. It looks like a sinusoidal function with a period equal to the width of the image.
+
+
+

@@ -708,6 +708,10 @@ def _tile_grid(images, ncols=None):
         grid[r*H:(r+1)*H, c*W:(c+1)*W] = img
     return grid
 
+# def normaffine01(x, mi, ma):
+#     x = (x - mi) / (ma - mi)
+    
+
 def task3(cfg):
     """Run retrieval for all 4 query/target combinations and save tiled grids as PNGs."""
 
@@ -726,7 +730,7 @@ def task3(cfg):
     ]
 
     for query_ds, target_ds in combos:
-        query_idxs = list(range(len(mitos[query_ds])))
+        query_idxs = list(range(len(mitos[query_ds])))[:1]
         nt = cfg.task3.n_targets if cfg.task3.n_targets else len(data[target_ds]['images'])
         print(f"\n=== q={query_ds} t={target_ds} ({len(query_idxs)} queries, {nt} targets) ===")
         raw_stack, sim_stack = _retrieval(
@@ -742,9 +746,11 @@ def task3(cfg):
 
         # Normalize sim: clamp lower bound, scale to [0,1], apply gamma
         # lb and gamma determined by visual inspection
-        sim_norm = (sim_grid - 0.533) / (sim_grid.max() - 0.533 + 1e-8)
-        sim_norm = np.clip(sim_norm, 0, 1)
-        sim_norm = sim_norm ** (1.0 / 1.8)
+        mi, ma = sim_grid.min(), sim_grid.max()
+        sim_norm = (sim_grid - mi) / (ma - mi)
+        # sim_norm = (sim_grid - 0.533) / (sim_grid.max() - 0.533 + 1e-8)
+        # sim_norm = np.clip(sim_norm, 0, 1)
+        # sim_norm = sim_norm ** (1.0 / 1.8)
 
         # Save raw grid
         fig, ax = plt.subplots(1, 1, figsize=(12, 12))

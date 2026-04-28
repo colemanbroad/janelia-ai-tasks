@@ -1,6 +1,7 @@
 [general]
-model = "vitl16_sat"   # see DINO_MODELS in main.py for options
-stride = 1
+# model = "vitl16_sat"   # see DINO_MODELS in main.py for options
+model = "vits16"
+stride = 4
 downsample_factor = 2
 subtract_pos = false
 seed = 42
