@@ -449,7 +449,7 @@ def load_datasets():
         assert os.path.isdir(out_dir), f"No data found at {out_dir}. Run task1() first."
         files = sorted([f for f in os.listdir(out_dir) if f.endswith('.npy')])
         images = []
-        coords = []
+        coords = [] ## TODO: don't extract coords from file name. save it as data properly on download and reload it here. Or skip entirely because never used.
         for f in files:
             # Parse coords from filename: 00_z123_y456_x789.npy
             parts = f.replace('.npy', '').split('_')

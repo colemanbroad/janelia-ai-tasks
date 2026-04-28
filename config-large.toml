@@ -1,0 +1,5 @@
+[general]
+headless = true
+model = "vit7b16_sat"
+stride = 1
+tasks = [4]

@@ -3,7 +3,7 @@ headless = false
 model = "vits16"       # "vits16" or "vitl16"
 stride = 2
 downsample_factor = 2
-subtract_pos = true
+subtract_pos = false
 seed = 42
 figures_dir = "figures"
 tasks = [1, 2, 3, 4]  # 1=download, 2=PCA, 3=retrieval, 4=retrieval figures, 5=model comparison
