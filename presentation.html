@@ -8,9 +8,9 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/monokai.css">
 <style>
 .reveal { font-size: 28px; }
-.reveal h1 { font-size: 1.8em; }
-.reveal h2 { font-size: 1.4em; }
-.reveal h3 { font-size: 1.1em; }
+.reveal h1 { font-size: 1.8em; text-transform: none; font-variant: small-caps; }
+.reveal h2 { font-size: 1.4em; text-transform: none; }
+.reveal h3 { font-size: 1.1em; text-transform: none; }
 .reveal pre { font-size: 0.55em; width: 95%; }
 .reveal img { max-height: 500px; }
 .reveal .small { font-size: 0.7em; }
@@ -36,10 +36,13 @@
 <h2>About Me</h2>
 <ul>
 <li>PhD with Gene Myers Lab, Dresden &mdash; DL for bioimage analysis</li>
+<li><strong>Cell Tracking Challenge</strong> &mdash; CNN detection + fast heuristic tracking across a variety of datasets: phase contrast, 3D+T light sheet data
+  <ul><li>Only method to attempt every single dataset in the challenge; still 1st on some problems.</li></ul>
+  <ul><li>In 2019, Srini Turaga said that my supervised cell detection work could probably be done self-supervised with VAEs. Maybe true then &mdash; almost certainly true now with DINO.</li></ul>
+</li>
+<li><strong>StructN2V</strong> &mdash; structured Noise2Void for self-supervised denoising with spatially correlated noise</li>
 <li>Contributed to <strong>CARE</strong> (denoising) and <strong>StarDist</strong> (detection/segmentation)</li>
-<li>Worked across modalities: phase contrast, histopathology, 3D+T SPIM, multi-view reconstruction</li>
-<li>3 years at Antithesis &mdash; deterministic simulation testing, fuzzing, RL-guided exploration</li>
-<li>Background in self-supervised learning &mdash; believe it's the path forward for bioimage analysis</li>
+<li>Last 3 years at Antithesis &mdash; deterministic simulation testing, fuzzing, RL-guided exploration</li>
 </ul>
 </section>
 
@@ -47,9 +50,9 @@
 <h2>Why Janelia?</h2>
 <ul>
 <li>Deep interest in neuroscience and connectomics</li>
-<li>Want to apply modern SSL models to EM data at scale</li>
-<li>Excited about the intersection of software engineering and scientific computing</li>
-<li>Love building tools that accelerate research for others</li>
+<li>Avid listener of the Dwarkesh Patel podcast &mdash; especially the Adam Marblestone episode on brain-inspired AI and connectomics</li>
+<li>Currently reading Max Bennett's <em>A Brief History of Intelligence</em> (twice!) &mdash; fascinated by how brains encode rewards for novel, high-level signals</li>
+<li>Budget to do large scale training? Can explore JEPA models?</li>
 </ul>
 </section>
 
@@ -186,9 +189,9 @@ accum /= counts</code></pre>
 </ul>
 <h3>Solutions tried:</h3>
 <ol>
-<li>Constant-image baseline subtraction</li>
-<li>Per-image mean subtraction</li>
-<li><strong>Empirical per-pixel mean across dataset</strong> &larr; works best</li>
+<li>Subtract embeddings of a constant (blank) image &mdash; removes average bias</li>
+<li>Subtract the spatial mean of each image's embeddings &mdash; removes a constant offset but not the spatial pattern</li>
+<li><strong>Subtract the per-pixel mean across all images + augmentations</strong> &mdash; content averages out, positional pattern remains and gets removed</li>
 </ol>
 </section>
 
