@@ -398,6 +398,7 @@ def run_dino_dense(model, x_np, dense_stride=4, subtract_pos=True, dataset='live
     Returns (pH, pW, embed_dim) numpy array at effective stride=dense_stride."""
     model_stride = _detect_model_stride(model)
     assert model_stride % dense_stride == 0, f"dense_stride={dense_stride} must divide model_stride={model_stride}"
+    assert model_stride == 16, "model stride must be 16"
 
     H, W = x_np.shape
 
