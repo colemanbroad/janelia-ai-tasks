@@ -36,13 +36,80 @@
 <h2>About Me</h2>
 <ul>
 <li>PhD with Gene Myers Lab, Dresden &mdash; DL for bioimage analysis</li>
-<li><strong>Cell Tracking Challenge</strong> &mdash; CNN detection + fast heuristic tracking across a variety of datasets: phase contrast, 3D+T light sheet data
-  <ul><li>Only method to attempt every single dataset in the challenge; still 1st on some problems.</li></ul>
-  <ul><li>In 2019, Srini Turaga said that my supervised cell detection work could probably be done self-supervised with VAEs. Maybe true then &mdash; almost certainly true now with DINO.</li></ul>
-</li>
-<li><strong>StructN2V</strong> &mdash; structured Noise2Void for self-supervised denoising with spatially correlated noise</li>
-<li>Contributed to <strong>CARE</strong> (denoising) and <strong>StarDist</strong> (detection/segmentation)</li>
-<li>Last 3 years at Antithesis &mdash; deterministic simulation testing, fuzzing, RL-guided exploration</li>
+<li>Background in self-supervised learning &mdash; believe it's the path forward for bioimage analysis</li>
+</ul>
+</section>
+
+<section>
+<h2>CARE &amp; StarDist</h2>
+<ul>
+<li><strong>CARE</strong> &mdash; Content-Aware Image Restoration: supervised denoising with matched noisy/clean training pairs</li>
+<li><strong>StarDist</strong> &mdash; star-convex polygon detection for densely packed cell nuclei</li>
+<li>Both widely adopted in the bioimage community</li>
+<li>Worked across modalities: phase contrast, histopathology, 3D+T SPIM, multi-view reconstruction</li>
+</ul>
+</section>
+
+<section>
+<h2>Cell Tracking Challenge</h2>
+<div class="columns">
+<div>
+<ul>
+<li>CNN detection + fast heuristic tracking</li>
+<li>Only method to attempt <strong>every single dataset</strong> in the challenge</li>
+<li>Still 1st on some problems</li>
+</ul>
+<img src="presentation/Screenshot 2026-04-29 at 5.27.10 PM.png" alt="CTC results" style="max-height:250px;">
+</div>
+<div>
+<img src="presentation/Screenshot 2026-04-29 at 5.36.53 PM.png" alt="CTC detections" style="max-height:450px;">
+</div>
+</div>
+</section>
+
+<section>
+<h2>Velocity Gradient Tracking</h2>
+<div class="columns">
+<div>
+<ul>
+<li>Track cells through large tissue deformations</li>
+<li>Use Delaunay triangulation to estimate local velocity gradients (strain)</li>
+<li>Robust to large displacements where nearest-neighbor fails</li>
+</ul>
+<img src="presentation/Screenshot 2026-04-29 at 5.40.51 PM.png" alt="VG diagram" style="max-height:200px;">
+</div>
+<div>
+<img src="presentation/Screenshot 2026-04-29 at 5.41.16 PM.png" alt="VG results" style="max-height:350px;">
+</div>
+</div>
+</section>
+
+<section>
+<h2>StructN2V</h2>
+<div class="columns">
+<div>
+<ul>
+<li><strong>Structured Noise2Void</strong> &mdash; self-supervised denoising for spatially correlated noise</li>
+<li>Standard N2V assumes independent noise &mdash; fails on structured artifacts</li>
+<li>StructN2V uses a structured blind spot mask matching the noise correlation</li>
+<li>No clean training data required</li>
+</ul>
+</div>
+<div>
+<img src="presentation/Screenshot 2026-04-29 at 3.55.50 PM.png" alt="StructN2V method" style="max-height:250px;">
+<img src="presentation/Screenshot 2026-04-29 at 5.16.44 PM.png" alt="StructN2V results" style="max-height:250px;">
+</div>
+</div>
+</section>
+
+<section>
+<h2>Antithesis</h2>
+<ul>
+<li>3 years building software testing infrastructure</li>
+<li>Deterministic simulation testing, fuzzing, property-based testing</li>
+<li>RL-guided exploration with intrinsic motivation and curiosity</li>
+<li>First two years worked closely with Dave Scherer (co-founder of FoundationDB) on novel distributed systems testing</li>
+<li>Learned a lot about large-scale software engineering and reliability</li>
 </ul>
 </section>
 
