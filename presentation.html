@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Janelia MIA-AI Presentation</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/white.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/monokai.css">
+<style>
+.reveal { font-size: 28px; }
+.reveal h1 { font-size: 1.8em; }
+.reveal h2 { font-size: 1.4em; }
+.reveal h3 { font-size: 1.1em; }
+.reveal pre { font-size: 0.55em; width: 95%; }
+.reveal img { max-height: 500px; }
+.reveal .small { font-size: 0.7em; }
+.reveal .columns { display: flex; gap: 20px; }
+.reveal .columns > * { flex: 1; }
+.reveal ul { text-align: left; }
+.reveal li { margin-bottom: 0.3em; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- ============ TITLE ============ -->
+<section>
+<h1>Microscopy Image Analysis<br>with DINOv3</h1>
+<h3>Embedding-Based Mitochondria Retrieval<br>on OpenOrganelle EM Data</h3>
+<p class="small">Coleman Broaddus</p>
+</section>
+
+<!-- ============ ABOUT ME ============ -->
+<section>
+<h2>About Me</h2>
+<ul>
+<li>PhD with Gene Myers Lab, Dresden &mdash; DL for bioimage analysis</li>
+<li>Contributed to <strong>CARE</strong> (denoising) and <strong>StarDist</strong> (detection/segmentation)</li>
+<li>Worked across modalities: phase contrast, histopathology, 3D+T SPIM, multi-view reconstruction</li>
+<li>3 years at Antithesis &mdash; deterministic simulation testing, fuzzing, RL-guided exploration</li>
+<li>Background in self-supervised learning &mdash; believe it's the path forward for bioimage analysis</li>
+</ul>
+</section>
+
+<section>
+<h2>Why Janelia?</h2>
+<ul>
+<li>Deep interest in neuroscience and connectomics</li>
+<li>Want to apply modern SSL models to EM data at scale</li>
+<li>Excited about the intersection of software engineering and scientific computing</li>
+<li>Love building tools that accelerate research for others</li>
+</ul>
+</section>
+
+<!-- ============ JOB 1: CODE REVIEW ============ -->
+<section>
+<h2>Job 1: Code Review</h2>
+<h3>Making research code collaborative</h3>
+</section>
+
+<section>
+<h2>What Works Well</h2>
+<ul>
+<li>Clean three-class structure: Model / Dataset / Trainer</li>
+<li>Correct PyTorch patterns: <code>train()</code>/<code>eval()</code>, <code>no_grad()</code></li>
+<li>Best-model checkpointing</li>
+<li>Training-stats normalization of test data</li>
+</ul>
+</section>
+
+<section>
+<h2>Key Issues</h2>
+<ul>
+<li><strong>Test data used as validation</strong> &mdash; leaks info into model selection</li>
+<li><strong>No reproducibility</strong> &mdash; no random seeds anywhere</li>
+<li><strong>All hyperparameters hardcoded</strong> &mdash; can't run ablations without editing source</li>
+<li><strong>Hardcoded output paths</strong> &mdash; experiments overwrite each other</li>
+</ul>
+</section>
+
+<section>
+<h2>Proposed Restructuring</h2>
+<ul>
+<li>Config object (dataclass/YAML/TOML) for all parameters</li>
+<li>Unique output directory per experiment run</li>
+<li>Proper train/val/test split with seeded shuffling</li>
+<li>Incremental logging &mdash; separate from visualization</li>
+<li>Model hyperparameters as constructor arguments</li>
+</ul>
+</section>
+
+<!-- ============ JOB 2: DINO FOR MITO ============ -->
+<section>
+<h2>Job 2: DINOv3 for Mitochondria</h2>
+<h3>Three tasks on OpenOrganelle EM data</h3>
+</section>
+
+<!-- TASK 1 -->
+<section>
+<h2>Task 1: Data Acquisition</h2>
+<ul>
+<li>Programmatic download from OpenOrganelle via zarr/S3</li>
+<li>Two datasets: <strong>jrc_mus-liver</strong> and <strong>jrc_mus-kidney</strong></li>
+<li>20 random 1024&times;1024 crops at full resolution (s0)</li>
+<li>Cached to disk, reproducible via seed</li>
+</ul>
+<pre><code class="python">def task1(cfg, n_samples=20, crop_size=1024):
+    for dname, info in datasets.items():
+        zs = np.random.randint(0, shape[0], size=n_samples)
+        ys = np.random.randint(0, shape[1] - crop_size, size=n_samples)
+        xs = np.random.randint(0, shape[2] - crop_size, size=n_samples)
+        for i, (z, y, x) in enumerate(zip(zs, ys, xs)):
+            slc = (int(z), slice(y, y+crop_size), slice(x, x+crop_size))
+            img = load_remote(info['ds'], info['subpath'], slc, fmt='zarr')
+</code></pre>
+</section>
+
+<section>
+<h2>Task 1: Navigating OpenOrganelle</h2>
+<ul>
+<li>N5 vs zarr axis conventions: <code>(z,y,x)</code> vs <code>(x,y,z)</code></li>
+<li>Neuroglancer coordinates are in physical space (nm), not voxels</li>
+<li>Multi-resolution pyramid: s0 (full) through s4+</li>
+<li>Built caching + bounds clamping + mirror padding into loader</li>
+</ul>
+</section>
+
+<!-- TASK 2 -->
+<section>
+<h2>Task 2: Feature Extraction</h2>
+<h3>Dense embeddings with DINOv3</h3>
+</section>
+
+<section>
+<h2>Patch Size Selection</h2>
+<ul>
+<li>DINOv3 ViT uses 16&times;16 patches</li>
+<li>At s0, mitochondria are ~20px wide &mdash; similar scale to patch size</li>
+<li>Captures texture but not full geometry</li>
+<li>Solution: downsample images so mitos span multiple patches</li>
+</ul>
+</section>
+
+<section>
+<h2>Dense Embeddings via Translated Passes</h2>
+<div class="columns">
+<div>
+<ul>
+<li>Native ViT stride = 16 &rarr; coarse grid</li>
+<li>Run model at <strong>multiple (dy, dx) offsets</strong></li>
+<li>Interleave results into a dense grid</li>
+<li>stride=4 &rarr; 16 passes, stride=2 &rarr; 64 passes</li>
+</ul>
+</div>
+<div>
+<pre><code class="python">for dy in range(0, 16, dense_stride):
+  for dx in range(0, 16, dense_stride):
+    x_shift = x[:, dy:, dx:]
+    # crop to patch-aligned, run model
+    # stitch tokens back to output grid
+    accum[gi, gj] += tokens[pi, pj]
+    counts[gi, gj] += 1
+accum /= counts</code></pre>
+</div>
+</div>
+</section>
+
+<section>
+<h2>Why Not Hack the Stride?</h2>
+<ul>
+<li>Setting <code>model.patch_embed.proj.stride = (4,4)</code> produces overlapping patches in one pass</li>
+<li>But creates <strong>high-frequency artifacts</strong> &mdash; the conv wasn't trained for overlap</li>
+<li>Translated passes give smoother, more consistent results</li>
+<li>Each pass sees the image as the model expects: non-overlapping 16&times;16 patches</li>
+</ul>
+</section>
+
+<section>
+<h2>Positional Encoding Challenges</h2>
+<ul>
+<li>DINOv3 uses <strong>RoPE</strong> (Rotary Position Embeddings)</li>
+<li>Bakes position into Q/K at every attention layer</li>
+<li>Creates a spatial gradient in embeddings (red&rarr;blue across image)</li>
+<li>Especially strong in SAT-trained models</li>
+</ul>
+<h3>Solutions tried:</h3>
+<ol>
+<li>Constant-image baseline subtraction</li>
+<li>Per-image mean subtraction</li>
+<li><strong>Empirical per-pixel mean across dataset</strong> &larr; works best</li>
+</ol>
+</section>
+
+<section>
+<h2>Task 2: PCA Visualization</h2>
+<p>RGB = first 3 PCA components of dense DINO embeddings</p>
+<div class="columns">
+<div>
+<h3>Liver</h3>
+<img src="figures/task2_pca_liver.png" alt="Liver PCA">
+</div>
+<div>
+<h3>Kidney</h3>
+<img src="figures/task2_pca_kidney.png" alt="Kidney PCA">
+</div>
+</div>
+</section>
+
+<section>
+<h2>Task 2: Raw vs PCA</h2>
+<div class="columns">
+<div>
+<h3>Liver</h3>
+<img src="figures/task2_liver.gif" alt="Liver GIF">
+</div>
+<div>
+<h3>Kidney</h3>
+<img src="figures/task2_kidney.gif" alt="Kidney GIF">
+</div>
+</div>
+</section>
+
+<!-- TASK 3 -->
+<section>
+<h2>Task 3: Embedding-Based Retrieval</h2>
+<h3>Can we find mitochondria using a single query?</h3>
+</section>
+
+<section>
+<h2>Retrieval Approach</h2>
+<ol>
+<li>Select mito centerpoints as query locations</li>
+<li>Extract query embedding at each point</li>
+<li>Compute <strong>cosine similarity</strong> against all target embeddings</li>
+<li>Average similarity maps across multiple queries</li>
+</ol>
+<pre><code class="python">for qemb in query_embs:
+    sim_accum += (tokens_normed @ qemb.T).squeeze(-1).numpy()
+sim_accum /= len(query_embs)</code></pre>
+</section>
+
+<section>
+<h2>Within-Dataset Retrieval</h2>
+<div class="columns">
+<div>
+<h3>Kidney &rarr; Kidney</h3>
+<img src="figures/task3_qkidney_tkidney.gif" alt="kidney-kidney">
+</div>
+<div>
+<h3>Liver &rarr; Liver</h3>
+<img src="figures/task3_qliver_tliver.gif" alt="liver-liver">
+</div>
+</div>
+</section>
+
+<section>
+<h2>Cross-Dataset Retrieval</h2>
+<div class="columns">
+<div>
+<h3>Kidney &rarr; Liver</h3>
+<img src="figures/task3_qkidney_tliver.gif" alt="kidney-liver">
+</div>
+<div>
+<h3>Liver &rarr; Kidney</h3>
+<img src="figures/task3_qliver_tkidney.gif" alt="liver-kidney">
+</div>
+</div>
+</section>
+
+<section>
+<h2>Multiple Queries</h2>
+<ul>
+<li>Average similarity maps across queries &mdash; not embeddings</li>
+<li>Each query contributes equally regardless of embedding magnitude</li>
+<li>More queries &rarr; smoother, more robust signal</li>
+<li>Could extend to: max-similarity, weighted average, or learned combination</li>
+</ul>
+</section>
+
+<!-- TASK 4 -->
+<section>
+<h2>Task 4: Improving Detection</h2>
+<h3>Proposal for minimal fine-tuning</h3>
+</section>
+
+<section>
+<h2>Proposed Approach</h2>
+<ul>
+<li><strong>LoRA</strong> on frozen DINO backbone &mdash; few trainable parameters</li>
+<li>EM data is fundamentally different from natural images &mdash; shallow features may need adaptation too</li>
+<li>Linear probing with existing ground truth labels</li>
+<li>Consider satellite-pretrained models as better domain match</li>
+<li>Per-dataset normalization statistics matter significantly</li>
+</ul>
+</section>
+
+<section>
+<h2>Lessons Learned</h2>
+<ul>
+<li>Input normalization is critical &mdash; per-dataset zero-mean/unit-variance</li>
+<li>RoPE positional encoding is a persistent challenge for dense prediction</li>
+<li>Empirical positional baseline (averaged across augmented dataset) works well</li>
+<li>Translated passes &gt; stride hacking for dense ViT inference</li>
+<li>ConvNeXt produces smooth features natively but at 32&times; downsampling</li>
+</ul>
+</section>
+
+<!-- ============ ENGINEERING ============ -->
+<section>
+<h2>Engineering Approach</h2>
+<ul>
+<li>TOML config with deep-merge overrides</li>
+<li>Headless execution &mdash; saves PNGs/GIFs, no GUI dependency</li>
+<li>Remote execution via rsync + SSH</li>
+<li>Auto-detect GPU, auto-select model</li>
+<li>Cached dataset stats, cached positional baselines</li>
+<li>Single script: <code>python main.py -c config.toml</code></li>
+</ul>
+</section>
+
+<!-- ============ END ============ -->
+<section>
+<h1>Thank You</h1>
+<p>Questions?</p>
+<p class="small">Code: <code>main.py</code> &bull; Config: <code>config.toml</code> &bull; Notes: <code>notes.md</code></p>
+</section>
+
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/highlight.js"></script>
+<script>
+Reveal.initialize({
+    hash: true,
+    slideNumber: true,
+    plugins: [RevealHighlight],
+    transition: 'fade',
+    width: 1200,
+    height: 700,
+});
+</script>
+</body>
+</html>
