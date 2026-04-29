@@ -218,3 +218,8 @@ We were min-max-01 normalizing AFTER combining images into a tiled grid. (but be
 
 OK, the problem with SAT models on task3 was that we didn't correctly plumb through the subtract_pos param!
 But now the task2 kidney results for vitl16 look way off. The colors look discrete and jumpy and clipped.
+
+Now it seems we've solved the spatial correlation problem by subtracting the average result across all predictions.
+The fact that this problem is much worse for The models trained on Instagram than on satellite data is probably an honest reflection of the domain shift.
+
+
