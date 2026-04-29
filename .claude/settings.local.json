@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(/Users/broaddus/Desktop/janelia-task/.venv/bin/python:*)"
+      "Bash(/Users/broaddus/Desktop/janelia-task/.venv/bin/python:*)",
+      "Bash(mv Screenshot*3.55.50*.png structn2v_method.png)",
+      "Bash(mv Screenshot*3.56.05*.png structn2v_results.png)",
+      "Bash(mv Screenshot*5.16.44*.png structn2v_comparison.png)",
+      "Bash(mv Screenshot*5.27.10*.png ctc_table.png)",
+      "Bash(mv Screenshot*5.36.53*.png ctc_detections.png)"
     ]
   }
 }
