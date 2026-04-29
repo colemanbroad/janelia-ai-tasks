@@ -222,4 +222,7 @@ But now the task2 kidney results for vitl16 look way off. The colors look discre
 Now it seems we've solved the spatial correlation problem by subtracting the average result across all predictions.
 The fact that this problem is much worse for The models trained on Instagram than on satellite data is probably an honest reflection of the domain shift.
 
-
+For task1, what is the right downscaling size?
+1. We could treat it as a hyperparam and optimize it wrt some supervised fine tuning.
+2. Try different downscaling factors and eyeball the results
+3. Do some Fourier Analysis vs Instagram training data and align on high-ish freq signal.

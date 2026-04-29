@@ -11,11 +11,15 @@
 .reveal h1 { font-size: 1.8em; text-transform: none; font-variant: small-caps; }
 .reveal h2 { font-size: 1.4em; text-transform: none; }
 .reveal h3 { font-size: 1.1em; text-transform: none; }
-.reveal pre { font-size: 0.55em; width: 95%; }
+.reveal pre { font-size: 0.55em; width: auto; max-width: 70%; margin: 0 auto; }
 .reveal img { max-height: 500px; }
 .reveal .small { font-size: 0.7em; }
 .reveal .columns { display: flex; gap: 20px; }
 .reveal .columns > * { flex: 1; }
+.toggle-img .img-pca { display: none; }
+.toggle-img .img-raw { display: block; }
+.toggle-img.show-pca .img-pca { display: block; }
+.toggle-img.show-pca .img-raw { display: none; }
 .reveal ul { text-align: left; }
 .reveal li { margin-bottom: 0.3em; }
 </style>
@@ -35,20 +39,30 @@
 <section>
 <h2>About Me</h2>
 <ul>
-<li>PhD with Gene Myers Lab, Dresden &mdash; DL for bioimage analysis</li>
-<li>Background in self-supervised learning &mdash; believe it's the path forward for bioimage analysis</li>
+<li>Undergrad Physics at Carnegie Mellon</li>
+<li>Moved to Dresden Germany in 2010.</li>
+<li>Biophysics simulations at MPI-PKS in Frank Juelicher dept through 2014.</li>
+<li>2015 joined Gene Myers Lab, Dresden &mdash; Bioimage Methods for Tracking Cells During Development.
+<ul>
+    <li>Instance Seg in tissues with fractured membranes.</li>
+    <li>StructN2V</li>
+    <li>Cell Tracking Challenge</li>
+    <li>TbA with Velocity Gradient Costs</li>
+    <li>CARE and Stardist</li>
+</ul>
+</li>
+<li>Joined Antithesis 2023 to research Software Testing.</li>
 </ul>
 </section>
 
-<section>
-<h2>CARE &amp; StarDist</h2>
-<ul>
-<li><strong>CARE</strong> &mdash; Content-Aware Image Restoration: supervised denoising with matched noisy/clean training pairs</li>
-<li><strong>StarDist</strong> &mdash; star-convex polygon detection for densely packed cell nuclei</li>
-<li>Both widely adopted in the bioimage community</li>
-<li>Worked across modalities: phase contrast, histopathology, 3D+T SPIM, multi-view reconstruction</li>
-</ul>
-</section>
+<!-- <section> -->
+<!-- <h2>CARE &amp; StarDist</h2> -->
+<!-- <ul> -->
+<!-- <li><strong>CARE</strong> &mdash; Content-Aware Image Restoration: supervised denoising with matched noisy/clean training pairs</li> -->
+<!-- <li><strong>StarDist</strong> &mdash; star-convex polygon detection for densely packed cell nuclei</li> -->
+<!-- <li>Both widely adopted in the bioimage community</li> -->
+<!-- </ul> -->
+<!-- </section> -->
 
 <section>
 <h2>Cell Tracking Challenge</h2>
@@ -107,28 +121,28 @@
 <ul>
 <li>Software Testing Research: Deterministic simulation testing, fuzzing, property-based testing</li>
 <li>Distributed systems testing</li>
-<li>RL-guided exploration with intrinsic motivation and curiosity</li>
+<li>RL-guided system exploration with intrinsic motivation and curiosity</li>
 <li>Worked closely with founder Dave Scherer (FoundationDB creator) on applying RL to fuzzing</li>
-<li>Fuzzing is agent exploring an unknown environment. RL guided with Curiosity/Novelty.</li>
+<!-- <li>Fuzzing is agent exploring an unknown environment. RL guided with Curiosity/Novelty.</li> -->
 <!-- <li>Learned a lot about large-scale software engineering and reliability</li> -->
 </ul>
 </section>
 
 <section>
-<h2>Interest in Neuroscience</h2>
+<h2>Why Janelia?</h2>
 <ul>
+<li>Recently developed a fascination with neuroscience</li>
 <li>Read Max Bennett's <em>A Brief History of Intelligence</em> &mdash; twice this year</li>
 <li>Listened to Adam Marblestone on Dwarkesh Patel &mdash; brain-inspired AI, connectomics, and the future of neuroscience tooling</li>
+<li>Fascinated by the "omnidirectional" inference in the neocortex</li>
+<li>Does the dopaminergic system really implement Sutton's TD Learning algorithm?</li>
 <li>Fascinated by how brains encode rewards for high-level, novel signals</li>
-<li>Want to work at the intersection of ML and neuroscience at scale</li>
 </ul>
 </section>
 
 <!-- ============ INTERLUDE ============ -->
 <section>
 <h1>Live Code Walkthrough</h1>
-<!-- <h3>Exploring the codebase built for this interview</h3> -->
-<!-- <p class="small">main.py &nbsp; &bull; &nbsp; config.toml</p> -->
 </section>
 
 <!-- ============ RESULTS: JOB 1 ============ -->
@@ -211,6 +225,20 @@
 </section>
 
 <section>
+<h2>DINOv3 ViT-S/16 Architecture</h2>
+<ul>
+<li><strong>Patch embedding:</strong> 16&times;16 patches &rarr; 384-dim tokens via linear projection</li>
+<li><strong>Transformer encoder:</strong> 12 layers, 6 heads, MLP ratio 4</li>
+<li><strong>Position encoding:</strong> RoPE (Rotary Position Embeddings) &mdash; relative position baked into attention</li>
+<li><strong>Register tokens:</strong> 4 extra tokens that absorb global/positional artifacts</li>
+<li><strong>Training:</strong> DINO self-supervised loss (student-teacher with EMA)</li>
+<li><strong>Output:</strong> CLS token + per-patch tokens (384-dim each)</li>
+</ul>
+<p class="small">Larger variants: ViT-B (768-dim, 12 heads), ViT-L (1024-dim, 16 heads), ViT-H (1280-dim), ViT-7B (4096-dim)<br>
+Also available: ConvNeXt backbones (hierarchical, 32&times; stride, no RoPE)</p>
+</section>
+
+<section>
 <h2>Patch Size Selection</h2>
 <ul>
 <li>DINOv3 ViT uses 16&times;16 patches</li>
@@ -226,7 +254,7 @@
 <div>
 <ul>
 <li>Native ViT stride = 16 &rarr; coarse grid</li>
-<li>Run model at <strong>multiple (dy, dx) offsets</strong></li>
+<li>Run model at <strong>multiple (dy, dx) offsets</strong> Tinv(f(T(x))) for T in Translations.</li>
 <li>Interleave results into a dense grid</li>
 <li>stride=4 &rarr; 16 passes, stride=2 &rarr; 64 passes</li>
 </ul>
@@ -271,30 +299,22 @@ accum /= counts</code></pre>
 </section>
 
 <section>
-<h2>Task 2: PCA Visualization</h2>
+<h2>Task 2: Raw vs PCA (click to toggle)</h2>
 <p>RGB = first 3 PCA components of dense DINO embeddings</p>
 <div class="columns">
 <div>
 <h3>Liver</h3>
-<img src="figures/task2_pca_liver.png" alt="Liver PCA">
+<div class="toggle-img" onclick="this.classList.toggle('show-pca')" style="cursor:pointer;">
+<img class="img-raw" src="figures-remote-6.1-satmodel/task2_raw_liver.png" alt="Liver Raw">
+<img class="img-pca" src="figures-remote-6.1-satmodel/task2_pca_liver.png" alt="Liver PCA">
+</div>
 </div>
 <div>
 <h3>Kidney</h3>
-<img src="figures/task2_pca_kidney.png" alt="Kidney PCA">
+<div class="toggle-img" onclick="this.classList.toggle('show-pca')" style="cursor:pointer;">
+<img class="img-raw" src="figures-remote-6.1-satmodel/task2_raw_kidney.png" alt="Kidney Raw">
+<img class="img-pca" src="figures-remote-6.1-satmodel/task2_pca_kidney.png" alt="Kidney PCA">
 </div>
-</div>
-</section>
-
-<section>
-<h2>Task 2: Raw vs PCA</h2>
-<div class="columns">
-<div>
-<h3>Liver</h3>
-<img src="figures/task2_liver.gif" alt="Liver GIF">
-</div>
-<div>
-<h3>Kidney</h3>
-<img src="figures/task2_kidney.gif" alt="Kidney GIF">
 </div>
 </div>
 </section>
@@ -354,6 +374,42 @@ sim_accum /= len(query_embs)</code></pre>
 <li>More queries &rarr; smoother, more robust signal</li>
 <li>Could extend to: max-similarity, weighted average, or learned combination</li>
 </ul>
+</section>
+
+<!-- MODEL COMPARISON -->
+<section>
+<h2>Model Comparison: PCA on Liver</h2>
+<p class="small">Same image, same pipeline, different pretrained backbones (click to toggle raw/PCA)</p>
+<div class="columns" style="flex-wrap: wrap;">
+<div style="flex: 0 0 48%; margin-bottom: 10px;">
+<h3>ViT-B/16 (LVD)</h3>
+<div class="toggle-img" onclick="this.classList.toggle('show-pca')" style="cursor:pointer;">
+<img class="img-raw" src="figures-remote-6-rmempiricalbase-vitb16/task2_raw_liver.png" alt="vitb16 raw" style="max-height:250px;">
+<img class="img-pca" src="figures-remote-6-rmempiricalbase-vitb16/task2_pca_liver.png" alt="vitb16 pca" style="max-height:250px;">
+</div>
+</div>
+<div style="flex: 0 0 48%; margin-bottom: 10px;">
+<h3>ViT-L/16 (SAT)</h3>
+<div class="toggle-img" onclick="this.classList.toggle('show-pca')" style="cursor:pointer;">
+<img class="img-raw" src="figures-remote-6.1-satmodel/task2_raw_liver.png" alt="sat raw" style="max-height:250px;">
+<img class="img-pca" src="figures-remote-6.1-satmodel/task2_pca_liver.png" alt="sat pca" style="max-height:250px;">
+</div>
+</div>
+<div style="flex: 0 0 48%;">
+<h3>ViT-H/16+ (LVD)</h3>
+<div class="toggle-img" onclick="this.classList.toggle('show-pca')" style="cursor:pointer;">
+<img class="img-raw" src="figures-remote-6.1-vith16plus/task2_raw_liver.png" alt="vith16 raw" style="max-height:250px;">
+<img class="img-pca" src="figures-remote-6.1-vith16plus/task2_pca_liver.png" alt="vith16 pca" style="max-height:250px;">
+</div>
+</div>
+<div style="flex: 0 0 48%;">
+<h3>ViT-B/16 (better norm)</h3>
+<div class="toggle-img" onclick="this.classList.toggle('show-pca')" style="cursor:pointer;">
+<img class="img-raw" src="figures-remote-6.1-betternorm/task2_raw_liver.png" alt="betternorm raw" style="max-height:250px;">
+<img class="img-pca" src="figures-remote-6.1-betternorm/task2_pca_liver.png" alt="betternorm pca" style="max-height:250px;">
+</div>
+</div>
+</div>
 </section>
 
 <!-- TASK 4 -->
