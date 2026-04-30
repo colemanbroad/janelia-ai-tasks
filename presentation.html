@@ -140,7 +140,7 @@
 
 <!-- ============ INTERLUDE ============ -->
 <section>
-<h1>Live Code Walkthrough</h1>
+<h1>Take Home Projects</h1>
 </section>
 
 <!-- ============ RESULTS: JOB 1 ============ -->
@@ -162,7 +162,7 @@
 <section>
 <h2>Key Issues</h2>
 <ul>
-<li><strong>Test data used as validation</strong> &mdash; leaks info into model selection</li>
+<li><strong>Test data used as validation!!</strong> &mdash; leaks info into model selection</li>
 <li><strong>No reproducibility</strong> &mdash; no random seeds anywhere</li>
 <li><strong>All hyperparameters hardcoded</strong> &mdash; can't run ablations without editing source</li>
 <li><strong>Hardcoded output paths</strong> &mdash; experiments overwrite each other</li>
@@ -195,15 +195,16 @@
 <li>20 random 1024&times;1024 crops at full resolution (s0)</li>
 <li>Cached to disk, reproducible via seed</li>
 </ul>
-<pre><code class="python">def task1(cfg, n_samples=20, crop_size=1024):
-    for dname, info in datasets.items():
-        zs = np.random.randint(0, shape[0], size=n_samples)
-        ys = np.random.randint(0, shape[1] - crop_size, size=n_samples)
-        xs = np.random.randint(0, shape[2] - crop_size, size=n_samples)
-        for i, (z, y, x) in enumerate(zip(zs, ys, xs)):
-            slc = (int(z), slice(y, y+crop_size), slice(x, x+crop_size))
-            img = load_remote(info['ds'], info['subpath'], slc, fmt='zarr')
-</code></pre>
+<!-- <pre><code class="python"> -->
+<!-- def task1(cfg, n_samples=20, crop_size=1024): -->
+    <!-- for dname, info in datasets.items(): -->
+        <!-- zs = np.random.randint(0, shape[0], size=n_samples) -->
+        <!-- ys = np.random.randint(0, shape[1] - crop_size, size=n_samples) -->
+        <!-- xs = np.random.randint(0, shape[2] - crop_size, size=n_samples) -->
+        <!-- for i, (z, y, x) in enumerate(zip(zs, ys, xs)): -->
+            <!-- slc = (int(z), slice(y, y+crop_size), slice(x, x+crop_size)) -->
+            <!-- img = load_remote(info['ds'], info['subpath'], slc, fmt='zarr') -->
+<!-- </code></pre> -->
 </section>
 
 <section>
@@ -211,8 +212,9 @@
 <ul>
 <li>N5 vs zarr axis conventions: <code>(z,y,x)</code> vs <code>(x,y,z)</code></li>
 <li>Neuroglancer coordinates are in physical space (nm), not voxels</li>
+<li>Neuroglancer X goes Right-to-Left</li>
 <li>Multi-resolution pyramid: s0 (full) through s4+</li>
-<li>Built caching + bounds clamping + mirror padding into loader</li>
+<li>Iterate on load() until we can pull exactly the image we see in Neuroglancer.</li>
 </ul>
 </section>
 
