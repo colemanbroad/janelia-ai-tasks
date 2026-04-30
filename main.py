@@ -5,6 +5,7 @@ _t_start = time.time()
 import argparse
 from types import SimpleNamespace
 
+import shutil
 import numpy as np
 import torch
 import zarr
@@ -719,7 +720,6 @@ def run_everything(cfg=None):
     torch.manual_seed(g.seed)
 
     # Clean figures directory
-    import shutil
     if os.path.exists(g.figures_dir):
         shutil.rmtree(g.figures_dir)
     os.makedirs(g.figures_dir)

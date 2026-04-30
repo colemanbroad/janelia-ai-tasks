@@ -8,7 +8,7 @@ subtract_pos = false
 subtract_pos_empirical = true  # subtract per-pixel mean across all images in task2
 seed = 42
 figures_dir = "figures"
-tasks = [2,] # 1=download, 2=PCA, 3=retrieval+figures, 4=model comparison
+tasks = [3,] # 1=download, 2=PCA, 3=retrieval+figures, 4=model comparison
 
 [task2]
 n_images = 9
