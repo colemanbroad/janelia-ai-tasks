@@ -45,8 +45,8 @@
 <li>2015 joined Gene Myers Lab, Dresden &mdash; Bioimage Methods for Tracking Cells During Development.
 <ul>
     <li>Instance Seg in tissues with fractured membranes.</li>
-    <li>StructN2V</li>
-    <li>Cell Tracking Challenge</li>
+    <li>Self-supervised Denoising (StructN2V)</li>
+    <li>ISBI Cell Tracking Challenge</li>
     <li>TbA with Velocity Gradient Costs</li>
     <li>CARE and Stardist</li>
 </ul>
@@ -65,13 +65,30 @@
 <!-- </section> -->
 
 <section>
+<h2>StructN2V</h2>
+<div class="columns">
+<div>
+<ul>
+<li><strong>Structured Noise2Void</strong> &mdash; self-supervised denoising for spatially correlated noise</li>
+<li>Standard N2V assumes pixelwise-independent noise &mdash; fails on structured artifacts</li>
+<li>Decouples input randomization and loss masking</li>
+</ul>
+</div>
+<div>
+<img src="presentation/structn2v_method.png" alt="StructN2V method" style="max-height:250px;">
+<img src="presentation/structn2v_comparison.png" alt="StructN2V results" style="max-height:250px;">
+</div>
+</div>
+</section>
+
+<section>
 <h2>Cell Tracking Challenge</h2>
 <div class="columns">
 <div>
 <ul>
-<li>CNN detection + fast heuristic tracking</li>
+<li>CNN detection + heuristic tracking</li>
+<li>Extremely Fast</li>
 <li>Only method to attempt <strong>every single dataset</strong> in the challenge</li>
-<li>Still 1st on some problems</li>
 </ul>
 <img src="presentation/ctc_table.png" alt="CTC results" style="max-height:250px;">
 </div>
@@ -87,56 +104,37 @@
 <div>
 <ul>
 <li>Track cells through large tissue deformations</li>
-<li>Use Delaunay triangulation to estimate local velocity gradients (strain)</li>
-<li>Robust to large displacements where nearest-neighbor fails</li>
+<li>Add 4-node "velocity gradient" costs to Tracking by Assignment (TbA) problem</li>
+<li>Jointly solves for tissue "flow" and cell tracking</li>
 </ul>
 <img src="presentation/vg_diagram.png" alt="VG diagram" style="max-height:200px;">
 </div>
 <div>
-<img src="presentation/vg_results.png" alt="VG results" style="max-height:350px;">
+<img src="presentation/vg_results.png" alt="VG results" style="max-height:550px;">
 </div>
 </div>
 </section>
 
 <section>
-<h2>StructN2V</h2>
-<div class="columns">
-<div>
+<h2>Antithesis: Software Testing Research</h2>
 <ul>
-<li><strong>Structured Noise2Void</strong> &mdash; self-supervised denoising for spatially correlated noise</li>
-<li>Standard N2V assumes independent noise &mdash; fails on structured artifacts</li>
-<li>StructN2V uses a structured blind spot mask matching the noise correlation</li>
-<li>No clean training data required</li>
-</ul>
-</div>
-<div>
-<img src="presentation/structn2v_method.png" alt="StructN2V method" style="max-height:250px;">
-<img src="presentation/structn2v_comparison.png" alt="StructN2V results" style="max-height:250px;">
-</div>
-</div>
-</section>
-
-<section>
-<h2>Antithesis</h2>
-<ul>
-<li>Software Testing Research: Deterministic simulation testing, fuzzing, property-based testing</li>
-<li>Distributed systems testing</li>
-<li>RL-guided system exploration with intrinsic motivation and curiosity</li>
+<li><em>Can we use RL to guide software exploration?</em></li>
+<li>Fuzzing, Stateful PBT, Deterministic Simulation Testing</li>
+<li>Distributed Systems</li>
 <li>Worked closely with founder Dave Scherer (FoundationDB creator) on applying RL to fuzzing</li>
-<!-- <li>Fuzzing is agent exploring an unknown environment. RL guided with Curiosity/Novelty.</li> -->
-<!-- <li>Learned a lot about large-scale software engineering and reliability</li> -->
 </ul>
 </section>
 
 <section>
 <h2>Why Janelia?</h2>
 <ul>
-<li>Recently developed a fascination with neuroscience</li>
-<li>Read Max Bennett's <em>A Brief History of Intelligence</em> &mdash; twice this year</li>
-<li>Listened to Adam Marblestone on Dwarkesh Patel &mdash; brain-inspired AI, connectomics, and the future of neuroscience tooling</li>
-<li>Fascinated by the "omnidirectional" inference in the neocortex</li>
+<li>Right at the intersection of neuroscience and AI!!</li>
+<li>Read Max Bennett's <em>A Brief History of Intelligence</em> twice this year (so far 🫣)</li>
+<li>Listened to Adam Marblestone on Dwarkesh Patel &mdash; Omnidirectional Inference, Reward Functions, Synthesis.</li>
+<hr>
+<li>How does the neocortex work?</li>
 <li>Does the dopaminergic system really implement Sutton's TD Learning algorithm?</li>
-<li>Fascinated by how brains encode rewards for high-level, novel signals</li>
+<li>How do brains encode rewards for high-level signals unseen by evolution?</li>
 </ul>
 </section>
 
