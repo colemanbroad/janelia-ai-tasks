@@ -9,7 +9,7 @@
 <style>
 .reveal { font-size: 28px; }
 .reveal h1 { font-size: 1.8em; text-transform: none; font-variant: small-caps; }
-.reveal h2 { font-size: 1.4em; text-transform: none; }
+.reveal h2 { font-size: 1.4em; text-transform: none; margin-bottom: 50px;}
 .reveal h3 { font-size: 1.1em; text-transform: none; }
 .reveal pre { font-size: 0.55em; width: auto; max-width: 70%; margin: 0 auto; }
 .reveal img { max-height: 500px; }
@@ -183,7 +183,7 @@
 <!-- ============ JOB 2: DINO FOR MITO ============ -->
 <section>
 <h2>Job 2: DINOv3 for Mitochondria</h2>
-<h3>Three tasks on OpenOrganelle EM data</h3>
+<h3>on OpenOrganelle EM data</h3>
 </section>
 
 <!-- TASK 1 -->
@@ -214,7 +214,9 @@
 <li>Neuroglancer coordinates are in physical space (nm), not voxels</li>
 <li>Neuroglancer X goes Right-to-Left</li>
 <li>Multi-resolution pyramid: s0 (full) through s4+</li>
-<li>Iterate on load() until we can pull exactly the image we see in Neuroglancer.</li>
+<li>Opaque errors if subpath is incorrect.</li>
+<hr>
+<li>Iterate on `load_remote()` until we can pull exactly the image we see in Neuroglancer.</li>
 </ul>
 </section>
 
@@ -230,7 +232,7 @@
 <li><strong>Patch embedding:</strong> 16&times;16 patches &rarr; 384-dim tokens via linear projection</li>
 <li><strong>Transformer encoder:</strong> 12 layers, 6 heads, MLP ratio 4</li>
 <li><strong>Position encoding:</strong> RoPE (Rotary Position Embeddings) &mdash; relative position baked into attention</li>
-<li><strong>Register tokens:</strong> 4 extra tokens that absorb global/positional artifacts</li>
+<li><strong>Register tokens:</strong> 4 extra tokens that absorb global/positional artifacts (in theory!!)</li>
 <li><strong>Training:</strong> DINO self-supervised loss (student-teacher with EMA)</li>
 <li><strong>Output:</strong> CLS token + per-patch tokens (384-dim each)</li>
 </ul>
@@ -242,43 +244,12 @@ Also available: ConvNeXt backbones (hierarchical, 32&times; stride, no RoPE)</p>
 <h2>Patch Size Selection</h2>
 <ul>
 <li>DINOv3 ViT uses 16&times;16 patches</li>
-<li>At s0, mitochondria are ~20px wide &mdash; similar scale to patch size</li>
+<li>Downsample to s1 (1/2 size) so smallest mitochondria are around 20px.</li>
+<li>We guess detection will be easier if patch has good chunk of mito. </li>
 <li>Captures texture but not full geometry</li>
-<li>Solution: downsample images so mitos span multiple patches</li>
-</ul>
-</section>
-
-<section>
-<h2>Dense Embeddings via Translated Passes</h2>
-<div class="columns">
-<div>
-<ul>
-<li>Native ViT stride = 16 &rarr; coarse grid</li>
-<li>Run model at <strong>multiple (dy, dx) offsets</strong> Tinv(f(T(x))) for T in Translations.</li>
-<li>Interleave results into a dense grid</li>
-<li>stride=4 &rarr; 16 passes, stride=2 &rarr; 64 passes</li>
-</ul>
-</div>
-<div>
-<pre><code class="python">for dy in range(0, 16, dense_stride):
-  for dx in range(0, 16, dense_stride):
-    x_shift = x[:, dy:, dx:]
-    # crop to patch-aligned, run model
-    # stitch tokens back to output grid
-    accum[gi, gj] += tokens[pi, pj]
-    counts[gi, gj] += 1
-accum /= counts</code></pre>
-</div>
-</div>
-</section>
-
-<section>
-<h2>Why Not Hack the Stride?</h2>
-<ul>
-<li>Setting <code>model.patch_embed.proj.stride = (4,4)</code> produces overlapping patches in one pass</li>
-<li>But creates <strong>high-frequency artifacts</strong> &mdash; the conv wasn't trained for overlap</li>
-<li>Translated passes give smoother, more consistent results</li>
-<li>Each pass sees the image as the model expects: non-overlapping 16&times;16 patches</li>
+<hr>
+<li>Probably could do something fancier like Fourier matching to Instagram training data?</li>
+<li>Or treat scale as hyperparam to optimize (expensive)</li>
 </ul>
 </section>
 
@@ -288,14 +259,48 @@ accum /= counts</code></pre>
 <li>DINOv3 uses <strong>RoPE</strong> (Rotary Position Embeddings)</li>
 <li>Bakes position into Q/K at every attention layer</li>
 <li>Creates a spatial gradient in embeddings (red&rarr;blue across image)</li>
-<li>Especially strong in SAT-trained models</li>
+<!-- <li>Especially strong in SAT-trained models</li> -->
 </ul>
-<h3>Solutions tried:</h3>
-<ol>
-<li>Subtract embeddings of a constant (blank) image &mdash; removes average bias</li>
-<li>Subtract the spatial mean of each image's embeddings &mdash; removes a constant offset but not the spatial pattern</li>
-<li><strong>Subtract the per-pixel mean across all images + augmentations</strong> &mdash; content averages out, positional pattern remains and gets removed</li>
-</ol>
+<!-- <h3>Solutions tried:</h3> -->
+<!-- <ol> -->
+<!-- <li>Subtract embeddings of a constant (blank) image &mdash; removes average bias</li> -->
+<!-- <li>Subtract the spatial mean of each image's embeddings &mdash; removes a constant offset but not the spatial pattern</li> -->
+<!-- <li><strong>Subtract the per-pixel mean across all images + augmentations</strong> &mdash; content averages out, positional pattern remains and gets removed</li> -->
+<!-- </ol> -->
+</section>
+
+<section>
+<h2>Solution to RoPE: Translated Passes</h2>
+<div class="columns">
+<div>
+<ul>
+<li>Native ViT stride = 16 &rarr; coarse grid</li>
+<li>Run model at <strong>multiple (dy, dx) offsets</strong> i.e. `Tinv(f(T(x))) for T in Translations`.</li>
+<li>Average across translation passes.</li>
+<li>stride=4 &rarr; 16 passes, stride=2 &rarr; 64 passes</li>
+</ul>
+</div>
+</div>
+<div class="columns">
+<div>
+<h3>Without background subtraction</h3>
+<img src="figures-vits-nonorm/task2_pca_liver.png" alt="No subtraction" style="max-height:300px;">
+</div>
+<div>
+<h3>With empirical subtraction</h3>
+<img src="figures/task2_pca_liver.png" alt="With subtraction" style="max-height:300px;">
+</div>
+</div>
+</section>
+
+<section>
+<h2>Why Not Hack the Stride?</h2>
+<ul>
+<li>Setting <code>model.patch_embed.proj.stride = (4,4)</code> produces overlapping patches in one pass</li>
+<li>But creates <strong>high-frequency artifacts</strong> &mdash; model wasn't trained for overlap</li>
+<li>Translated passes give smoother, more consistent results</li>
+<li>Each pass sees the image as the model expects: non-overlapping 16&times;16 patches</li>
+</ul>
 </section>
 
 <section>
@@ -331,7 +336,7 @@ accum /= counts</code></pre>
 <li>Select mito centerpoints as query locations</li>
 <li>Extract query embedding at each point</li>
 <li>Compute <strong>cosine similarity</strong> against all target embeddings</li>
-<li>Average similarity maps across multiple queries</li>
+<li>Average (max?) similarity maps across multiple queries</li>
 </ol>
 <pre><code class="python">for qemb in query_embs:
     sim_accum += (tokens_normed @ qemb.T).squeeze(-1).numpy()
@@ -343,11 +348,11 @@ sim_accum /= len(query_embs)</code></pre>
 <div class="columns">
 <div>
 <h3>Kidney &rarr; Kidney</h3>
-<img src="figures/task3_qkidney_tkidney.gif" alt="kidney-kidney">
+<img src="figures-remote-4-vitl16_sat-itworks/task3_qkidney_tkidney.gif" alt="kidney-kidney">
 </div>
 <div>
 <h3>Liver &rarr; Liver</h3>
-<img src="figures/task3_qliver_tliver.gif" alt="liver-liver">
+<img src="figures-remote-4-vitl16_sat-itworks/task3_qliver_tliver.gif" alt="liver-liver">
 </div>
 </div>
 </section>
@@ -357,24 +362,37 @@ sim_accum /= len(query_embs)</code></pre>
 <div class="columns">
 <div>
 <h3>Kidney &rarr; Liver</h3>
-<img src="figures/task3_qkidney_tliver.gif" alt="kidney-liver">
+<img src="figures-remote-4-vitl16_sat-itworks/task3_qkidney_tliver.gif" alt="kidney-liver">
 </div>
 <div>
 <h3>Liver &rarr; Kidney</h3>
-<img src="figures/task3_qliver_tkidney.gif" alt="liver-kidney">
+<img src="figures-remote-4-vitl16_sat-itworks/task3_qliver_tkidney.gif" alt="liver-kidney">
 </div>
 </div>
 </section>
 
 <section>
-<h2>Multiple Queries</h2>
+<h2>Conclusions</h2>
+<div class="columns">
+<div>
 <ul>
-<li>Average similarity maps across queries &mdash; not embeddings</li>
-<li>Each query contributes equally regardless of embedding magnitude</li>
-<li>More queries &rarr; smoother, more robust signal</li>
-<li>Could extend to: max-similarity, weighted average, or learned combination</li>
+<li>Consider satellite-pretrained models as better domain match</li>
+<li>Bigger is better</li>
+<li>RoPE embeddings are big problem, especially for smaller Instagram models ;)</li>
 </ul>
+</div>
+</div>
 </section>
+
+<!-- <section> -->
+<!-- <h2>Multiple Queries</h2> -->
+<!-- <ul> -->
+<!-- <li>Average similarity maps across queries &mdash; not embeddings</li> -->
+<!-- <li>Each query contributes equally regardless of embedding magnitude</li> -->
+<!-- <li>More queries &rarr; smoother, more robust signal</li> -->
+<!-- <li>Could extend to: max-similarity, weighted average, or learned combination</li> -->
+<!-- </ul> -->
+<!-- </section> -->
 
 <!-- MODEL COMPARISON -->
 <section>
@@ -413,43 +431,40 @@ sim_accum /= len(query_embs)</code></pre>
 </section>
 
 <!-- TASK 4 -->
-<section>
-<h2>Task 4: Improving Detection</h2>
-<h3>Proposal for minimal fine-tuning</h3>
-</section>
+<!-- <section> -->
+<!-- <h2>Task 4: Improving Detection</h2> -->
+<!-- <h3>Proposal for minimal fine-tuning</h3> -->
+<!-- </section> -->
 
 <section>
-<h2>Proposed Approach</h2>
+<h2>Task 4: Improving Detection w minimal params</h2>
 <ul>
-<li><strong>LoRA</strong> on frozen DINO backbone &mdash; few trainable parameters</li>
-<li>EM data is fundamentally different from natural images &mdash; shallow features may need adaptation too</li>
 <li>Linear probing with existing ground truth labels</li>
-<li>Consider satellite-pretrained models as better domain match</li>
-<li>Per-dataset normalization statistics matter significantly</li>
+<li><strong>LoRA</strong> on frozen DINO backbone &mdash; few trainable parameters</li>
+<li>But EM data is fundamentally different from natural images &mdash; shallow features may need adaptation too</li>
 </ul>
 </section>
 
-<section>
-<h2>Lessons Learned</h2>
-<ul>
-<li>Input normalization is critical &mdash; per-dataset zero-mean/unit-variance</li>
-<li>RoPE positional encoding is a persistent challenge for dense prediction</li>
-<li>Empirical positional baseline (averaged across augmented dataset) works well</li>
-<li>Translated passes &gt; stride hacking for dense ViT inference</li>
-<li>ConvNeXt produces smooth features natively but at 32&times; downsampling</li>
-</ul>
-</section>
+<!-- <section> -->
+<!-- <h2>Lessons Learned</h2> -->
+<!-- <ul> -->
+<!-- <li>Input normalization is critical &mdash; per-dataset zero-mean/unit-variance</li> -->
+<!-- <li>RoPE positional encoding is a persistent challenge for dense prediction</li> -->
+<!-- <li>Empirical positional baseline (averaged across augmented dataset) works well</li> -->
+<!-- <li>Translated passes &gt; stride hacking for dense ViT inference</li> -->
+<!-- <li>ConvNeXt produces smooth features natively but at 32&times; downsampling</li> -->
+<!-- </ul> -->
+<!-- </section> -->
 
 <!-- ============ ENGINEERING ============ -->
+
 <section>
 <h2>Engineering Approach</h2>
 <ul>
-<li>TOML config with deep-merge overrides</li>
+<li>Remote execution via rsync + SSH on A100 instances (cheap, big GPU)</li>
 <li>Headless execution &mdash; saves PNGs/GIFs, no GUI dependency</li>
-<li>Remote execution via rsync + SSH</li>
-<li>Auto-detect GPU, auto-select model</li>
 <li>Cached dataset stats, cached positional baselines</li>
-<li>Single script: <code>python main.py -c config.toml</code></li>
+<li>Single entrypoint: <code>python main.py -c config.toml</code></li>
 </ul>
 </section>
 
@@ -457,7 +472,7 @@ sim_accum /= len(query_embs)</code></pre>
 <section>
 <h1>Thank You</h1>
 <p>Questions?</p>
-<p class="small">Code: <code>main.py</code> &bull; Config: <code>config.toml</code> &bull; Notes: <code>notes.md</code></p>
+<!-- <p class="small">Code: <code>main.py</code> &bull; Config: <code>config.toml</code> &bull; Notes: <code>notes.md</code></p> -->
 </section>
 
 </div>
